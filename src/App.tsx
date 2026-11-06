@@ -1,38 +1,34 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { AppLayout } from "./components/AppLayout";
+import { CommandPalette } from "./components/CommandPalette";
+import { SettingsDialog } from "./components/SettingsDialog";
+import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
+import { useThemeSync } from "./hooks/useThemeSync";
+import { useNotes } from "./store/notes";
 
 function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
 export default function App() {
-  const [info, setInfo] = useState<string>("NoteNest");
+  useThemeSync();
+  useGlobalShortcuts();
 
   useEffect(() => {
-    if (!isTauri()) return;
-    invoke<string>("app_info")
-      .then(setInfo)
-      .catch((e) => console.error("app_info failed", e));
+    void useNotes.getState().load();
+    if (isTauri()) {
+      invoke<string>("app_info")
+        .then((info) => console.info(info))
+        .catch((e) => console.error("app_info failed", e));
+    }
   }, []);
 
   return (
-    <div className="grid h-screen grid-cols-[14rem_18rem_1fr] bg-white text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100">
-      <aside
-        aria-label="Sidebar"
-        className="border-r border-neutral-200 p-3 dark:border-neutral-800"
-      >
-        <h1 className="text-sm font-semibold">NoteNest</h1>
-      </aside>
-      <section
-        aria-label="Note list"
-        className="border-r border-neutral-200 p-3 dark:border-neutral-800"
-      >
-        <p className="text-sm text-neutral-500">No notes yet.</p>
-      </section>
-      <main className="flex flex-col p-6">
-        <p className="text-neutral-500">Editor placeholder</p>
-        <footer className="mt-auto text-xs text-neutral-400">{info}</footer>
-      </main>
+    <div className="h-screen bg-bg text-fg">
+      <AppLayout />
+      <CommandPalette />
+      <SettingsDialog />
     </div>
   );
 }

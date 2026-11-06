@@ -1,1 +1,75 @@
 @import "tailwindcss";
+
+/* Design tokens. Components use only the semantic colors below, so a new
+   theme only has to redefine these variables (see [data-theme] blocks). */
+:root {
+  color-scheme: light;
+  --bg: #ffffff;
+  --surface: #f6f6f7;
+  --surface-hover: #ececee;
+  --surface-active: #e3e3f6;
+  --border: #e2e2e5;
+  --fg: #1a1a1f;
+  --fg-muted: #5f5f6b;
+  --accent: #4f46e5;
+  --accent-fg: #ffffff;
+  --ring: #6366f1;
+  --overlay: rgb(0 0 0 / 0.4);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #16161a;
+  --surface: #1d1d23;
+  --surface-hover: #26262e;
+  --surface-active: #2f2f48;
+  --border: #2d2d36;
+  --fg: #ececf1;
+  --fg-muted: #a0a0ad;
+  --accent: #818cf8;
+  --accent-fg: #14141a;
+  --ring: #818cf8;
+  --overlay: rgb(0 0 0 / 0.6);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-hover: var(--surface-hover);
+  --color-surface-active: var(--surface-active);
+  --color-border: var(--border);
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-ring: var(--ring);
+  --color-overlay: var(--overlay);
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
