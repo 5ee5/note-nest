@@ -30,6 +30,15 @@ pub struct ReindexReport {
     pub skipped_invalid: Vec<String>,
     /// Notes given a new id because another note already used theirs.
     pub duplicate_ids_fixed: Vec<String>,
+    /// Leftover temp files from interrupted atomic writes that were removed.
+    pub stale_temp_files_removed: usize,
+}
+
+/// Temp files older than this are leftovers of a crashed write, not one in progress.
+const STALE_TEMP_AGE: std::time::Duration = std::time::Duration::from_secs(300);
+
+fn is_temp_name(name: &str) -> bool {
+    name.starts_with(".nn-") && name.ends_with(".tmp")
 }
 
 struct Scan {
@@ -56,7 +65,9 @@ fn scan(vault: &Vault) -> Result<Scan> {
         .sort_by_file_name()
         .min_depth(1)
         .into_iter()
-        .filter_entry(|e| !is_hidden(e.file_name()));
+        // Hidden directories (.git, .notenest, ...) are skipped; hidden files are
+        // visited only so stale temp files can be cleaned up.
+        .filter_entry(|e| !(e.file_type().is_dir() && is_hidden(e.file_name())));
     for entry in walker {
         let entry = entry.map_err(|e| {
             let path = e.path().unwrap_or(&root).to_owned();
@@ -69,6 +80,20 @@ fn scan(vault: &Vault) -> Result<Scan> {
         })?;
         let ft = entry.file_type();
         if ft.is_symlink() {
+            continue;
+        }
+        if ft.is_file() && is_hidden(entry.file_name()) {
+            let name = entry.file_name().to_str().unwrap_or_default();
+            let stale = is_temp_name(name)
+                && entry
+                    .metadata()
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.elapsed().ok())
+                    .is_some_and(|age| age > STALE_TEMP_AGE);
+            if stale && fs::remove_file(entry.path()).is_ok() {
+                report.stale_temp_files_removed += 1;
+            }
             continue;
         }
         let Ok(rel) = entry.path().strip_prefix(&root) else {

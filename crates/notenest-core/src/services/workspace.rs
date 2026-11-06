@@ -58,9 +58,9 @@ pub struct OpenReport {
 /// Cheap to clone; clones share one write lock.
 #[derive(Debug, Clone)]
 pub struct Workspace {
-    vault: Vault,
-    db: Database,
-    write_lock: Arc<Mutex<()>>,
+    pub(super) vault: Vault,
+    pub(super) db: Database,
+    pub(super) write_lock: Arc<Mutex<()>>,
 }
 
 fn utc(t: std::io::Result<std::time::SystemTime>) -> Option<DateTime<Utc>> {
@@ -248,18 +248,9 @@ impl Workspace {
             }
             _ => {}
         }
-        let kept_id = parse_meta(&String::from_utf8_lossy(&on_disk)).id;
-        let to_write = match kept_id {
-            Some(k) if parse_meta(content).id != Some(k) => set_meta(
-                content,
-                &MetaUpdate {
-                    id: Some(k),
-                    ..Default::default()
-                },
-            ),
-            _ => content.to_owned(),
-        };
+        let to_write = preserve_id(&on_disk, content);
         self.vault.write(&path, to_write.as_bytes())?;
+        self.clear_draft_if_saved(id, content);
         let fresh = self.build_record(&path, to_write.as_bytes(), Some(&record));
         self.store(Some(&record), &fresh).await?;
         Ok(NoteContent {
@@ -544,6 +535,21 @@ impl Workspace {
         std::fs::create_dir_all(&dir).map_err(|e| Error::io(&dir, e))?;
         let stamp = Utc::now().format("%Y%m%dT%H%M%S%.3f");
         write_atomic(&dir.join(format!("{id}-{stamp}.md")), bytes)
+    }
+}
+
+/// What `save_note` writes for `content`: the same text, except that a note's
+/// frontmatter `id` (if the file on disk has one) is kept.
+pub(super) fn preserve_id(on_disk: &[u8], content: &str) -> String {
+    match parse_meta(&String::from_utf8_lossy(on_disk)).id {
+        Some(k) if parse_meta(content).id != Some(k) => set_meta(
+            content,
+            &MetaUpdate {
+                id: Some(k),
+                ..Default::default()
+            },
+        ),
+        _ => content.to_owned(),
     }
 }
 
