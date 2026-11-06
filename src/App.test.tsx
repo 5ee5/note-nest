@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
@@ -8,6 +8,20 @@ import { useNotes } from "./store/notes";
 import { useRecovery } from "./store/recovery";
 import { useUi } from "./store/ui";
 import { useVault } from "./store/vault";
+
+// CodeMirror needs a real browser layout engine; the app tests use a plain textarea with
+// the same props. The real editor is covered by headless unit tests and browser checks.
+vi.mock("./components/MarkdownEditor", async () => {
+  const { createElement } = await import("react");
+  return {
+    default: ({ value, onChange }: { value: string; onChange: (t: string) => void }) =>
+      createElement("textarea", {
+        "aria-label": "Note content",
+        value,
+        onChange: (e: { target: { value: string } }) => onChange(e.target.value),
+      }),
+  };
+});
 
 beforeAll(() => {
   // happy-dom has no ResizeObserver; react-resizable-panels needs one.

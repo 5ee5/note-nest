@@ -22,6 +22,8 @@ interface EditorState {
   message: string | null;
   loading: boolean;
   loadError: string | null;
+  /** Bumped whenever the text is replaced wholesale (open, reload); remounts the editor. */
+  revision: number;
 
   load: (id: string) => Promise<void>;
   edit: (text: string) => void;
@@ -57,6 +59,7 @@ const EMPTY = {
   loading: false,
   loadError: null,
 };
+const INITIAL_REVISION = 0;
 
 function clearTimers(): void {
   clearTimeout(saveTimer);
@@ -134,6 +137,7 @@ export const useEditor = create<EditorState>((set, get) => {
   function adopt(doc: { note: { id: string }; content: string; contentHash: string }): void {
     set({
       ...EMPTY,
+      revision: get().revision + 1,
       noteId: doc.note.id,
       content: doc.content,
       savedContent: doc.content,
@@ -143,11 +147,12 @@ export const useEditor = create<EditorState>((set, get) => {
 
   return {
     ...EMPTY,
+    revision: INITIAL_REVISION,
 
     load: async (id) => {
       await get().flush();
       const token = ++loadToken;
-      set({ ...EMPTY, loading: true });
+      set({ ...EMPTY, revision: get().revision + 1, loading: true });
       try {
         const doc = await api().readNote(id);
         if (token !== loadToken) return;
@@ -155,7 +160,7 @@ export const useEditor = create<EditorState>((set, get) => {
         useNotes.getState().applyNote(doc.note);
       } catch (e) {
         if (token !== loadToken) return;
-        set({ ...EMPTY, loadError: toApiError(e).message });
+        set({ ...EMPTY, revision: get().revision + 1, loadError: toApiError(e).message });
       }
     },
 
@@ -230,7 +235,7 @@ export const useEditor = create<EditorState>((set, get) => {
       clearTimers();
       loadToken++;
       forceOverwrite = false;
-      set({ ...EMPTY });
+      set({ ...EMPTY, revision: get().revision + 1 });
     },
   };
 });

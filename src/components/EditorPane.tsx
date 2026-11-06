@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import {
   Archive,
   ArchiveRestore,
@@ -15,6 +15,9 @@ import { cn } from "../lib/cn";
 import { useEditor, type SaveStatus } from "../store/editor";
 import { useNotes } from "../store/notes";
 import { useUi } from "../store/ui";
+
+// The editor (CodeMirror and its language packs) is loaded on first use.
+const MarkdownEditor = lazy(() => import("./MarkdownEditor"));
 
 const STATUS_LABEL: Record<SaveStatus, string> = {
   idle: "",
@@ -84,7 +87,7 @@ export function EditorPane() {
   const setSidebarCollapsed = useUi((s) => s.setSidebarCollapsed);
   const setExplorerCollapsed = useUi((s) => s.setExplorerCollapsed);
   const setPaletteOpen = useUi((s) => s.setPaletteOpen);
-  const { noteId, content, status, message, loading, loadError } = useEditor();
+  const { noteId, content, status, message, loading, loadError, revision } = useEditor();
   const edit = useEditor((s) => s.edit);
   const keepMine = useEditor((s) => s.keepMine);
   const loadTheirs = useEditor((s) => s.loadTheirs);
@@ -200,14 +203,16 @@ export function EditorPane() {
             </div>
           )}
 
-          <textarea
-            aria-label="Note content"
-            value={content}
-            disabled={loading}
-            onChange={(e) => edit(e.target.value)}
-            spellCheck
-            className="min-h-0 flex-1 resize-none bg-transparent px-7 pb-6 font-mono text-sm leading-relaxed focus-visible:outline-none"
-          />
+          <div className="min-h-0 flex-1">
+            <Suspense fallback={<p className="px-7 text-sm text-fg-muted">Loading editor…</p>}>
+              <MarkdownEditor
+                key={`${noteId}:${revision}`}
+                value={content}
+                onChange={edit}
+                onSave={() => void flush()}
+              />
+            </Suspense>
+          </div>
         </div>
       ) : (
         <div className="p-8">

@@ -15,6 +15,13 @@
   --accent-fg: #ffffff;
   --ring: #6366f1;
   --overlay: rgb(0 0 0 / 0.4);
+  --selection: #c7d2fe;
+  --syn-keyword: #8250df;
+  --syn-string: #0a7d3e;
+  --syn-number: #b35900;
+  --syn-comment: #6e7781;
+  --syn-fn: #0b5fc4;
+  --syn-prop: #a1295d;
 }
 
 :root[data-theme="dark"] {
@@ -30,6 +37,13 @@
   --accent-fg: #14141a;
   --ring: #818cf8;
   --overlay: rgb(0 0 0 / 0.6);
+  --selection: #3b3f73;
+  --syn-keyword: #c9a4ff;
+  --syn-string: #7ee0a1;
+  --syn-number: #ffb26b;
+  --syn-comment: #8b949e;
+  --syn-fn: #79b8ff;
+  --syn-prop: #ff9cc3;
 }
 
 @theme inline {
