@@ -1,0 +1,21 @@
+[package]
+name = "notenest"
+description = "NoteNest desktop shell"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "notenest_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+notenest-core = { path = "../crates/notenest-core" }
+
+[lints]
+workspace = true
