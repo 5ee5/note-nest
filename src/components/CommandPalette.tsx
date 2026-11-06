@@ -1,5 +1,12 @@
 import { Command } from "cmdk";
-import { changeTheme, createFolder, createNote, openDailyNote, openNote } from "../lib/actions";
+import {
+  changeEditorMode,
+  changeTheme,
+  createFolder,
+  createNote,
+  openDailyNote,
+  openNote,
+} from "../lib/actions";
 import { THEMES, type Theme } from "../lib/theme";
 import { isDailyNote, type View } from "../lib/notes";
 import { useNotes } from "../store/notes";
@@ -87,6 +94,18 @@ export function CommandPalette() {
             onSelect={run(() => setExplorerCollapsed(!explorerCollapsed))}
           >
             Toggle note explorer
+          </Command.Item>
+        </Command.Group>
+
+        <Command.Group heading="View" className={groupClass}>
+          <Command.Item className={itemClass} onSelect={run(() => changeEditorMode("edit"))}>
+            View: Edit
+          </Command.Item>
+          <Command.Item className={itemClass} onSelect={run(() => changeEditorMode("split"))}>
+            View: Edit and preview
+          </Command.Item>
+          <Command.Item className={itemClass} onSelect={run(() => changeEditorMode("preview"))}>
+            View: Preview
           </Command.Item>
         </Command.Group>
 

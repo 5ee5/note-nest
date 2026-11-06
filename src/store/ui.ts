@@ -2,6 +2,13 @@ import { create } from "zustand";
 import { applyTheme, loadTheme, saveTheme, type Theme } from "../lib/theme";
 import type { SortKey, View } from "../lib/notes";
 
+/** Edit only, edit and preview side by side, or preview only. */
+export type EditorMode = "edit" | "split" | "preview";
+
+export function isEditorMode(v: unknown): v is EditorMode {
+  return v === "edit" || v === "split" || v === "preview";
+}
+
 export interface Notice {
   id: number;
   kind: "error" | "warning" | "info";
@@ -19,6 +26,7 @@ export interface PromptRequest {
 
 interface UiState {
   theme: Theme;
+  editorMode: EditorMode;
   view: View;
   sort: SortKey;
   query: string;
@@ -33,6 +41,7 @@ interface UiState {
   searchFocusTick: number;
 
   setTheme: (theme: Theme) => void;
+  setEditorMode: (mode: EditorMode) => void;
   setView: (view: View) => void;
   setSort: (sort: SortKey) => void;
   setQuery: (query: string) => void;
@@ -52,6 +61,7 @@ let noticeCounter = 0;
 
 export const useUi = create<UiState>((set) => ({
   theme: loadTheme(),
+  editorMode: "edit",
   view: { kind: "all" },
   sort: "updated",
   query: "",
@@ -69,6 +79,7 @@ export const useUi = create<UiState>((set) => ({
     applyTheme(theme);
     set({ theme });
   },
+  setEditorMode: (editorMode) => set({ editorMode }),
   setView: (view) => set({ view, query: "" }),
   setSort: (sort) => set({ sort }),
   setQuery: (query) => set({ query }),

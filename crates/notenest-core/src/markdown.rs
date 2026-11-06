@@ -94,6 +94,9 @@ pub fn render_markdown(
 
     let mut builder = ammonia::Builder::default();
     builder
+        // Table column alignment is the only inline style allowed (see `filter_attribute`).
+        .add_tag_attributes("th", ["style"])
+        .add_tag_attributes("td", ["style"])
         .url_schemes(HashSet::from(["http", "https", "mailto", "data"]))
         .url_relative(ammonia::UrlRelative::PassThrough)
         .link_rel(Some("noopener noreferrer"))
@@ -131,6 +134,15 @@ fn filter_attribute<'a>(
         }
     };
     match (element, attribute) {
+        // Only the exact alignment declarations pulldown-cmark writes; any other CSS is dropped.
+        ("th" | "td", "style") => {
+            let v = value.trim().trim_end_matches(';').trim();
+            matches!(
+                v,
+                "text-align: left" | "text-align: right" | "text-align: center"
+            )
+            .then(|| Cow::Borrowed(value))
+        }
         ("img", "src") => {
             let ctx = images?;
             match inline_image(ctx, value, limits, total) {
@@ -308,6 +320,32 @@ mod tests {
         assert!(r.html.contains("<pre><code") && r.html.contains("fn main() {}"));
         assert!(r.html.contains("☑ done") && r.html.contains("☐ todo"));
         assert!(!r.html.contains("<input"));
+    }
+
+    #[test]
+    fn table_alignment_survives_but_no_other_css_does() {
+        let r = render("| L | C | R |\n|:--|:-:|--:|\n| 1 | 2 | 3 |\n");
+        for align in ["left", "center", "right"] {
+            assert!(
+                r.html.contains(&format!("text-align: {align}")),
+                "{}",
+                r.html
+            );
+        }
+        for hostile in [
+            "<table><tr><td style=\"text-align: right; background: url(javascript:alert(1))\">x</td></tr></table>",
+            "<table><tr><td style=\"position: fixed; top: 0\">x</td></tr></table>",
+            "<table><tr><td style=\"text-align: right\" onclick=\"alert(1)\">x</td></tr></table>",
+        ] {
+            let html = render(hostile).html;
+            assert!(!html.contains("javascript:") && !html.contains("position") && !html.contains("onclick"), "{html}");
+        }
+        // A harmless alignment inside raw HTML is fine too.
+        assert!(
+            render("<table><tr><td style=\"text-align: right\">x</td></tr></table>")
+                .html
+                .contains("text-align: right")
+        );
     }
 
     #[test]

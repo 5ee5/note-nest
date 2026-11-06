@@ -2,23 +2,40 @@ import { lazy, Suspense, useState } from "react";
 import {
   Archive,
   ArchiveRestore,
+  Columns2,
   Command as CommandIcon,
   Copy,
+  Eye,
+  Pencil,
   PanelLeft,
   Search,
   Star,
   Trash2,
 } from "lucide-react";
-import { deleteNote, duplicateNote, renameNote, setArchived, setPinned } from "../lib/actions";
+import {
+  changeEditorMode,
+  deleteNote,
+  duplicateNote,
+  renameNote,
+  setArchived,
+  setPinned,
+} from "../lib/actions";
 import { modLabel } from "../lib/shortcuts";
 import { cn } from "../lib/cn";
 import { useEditor, type SaveStatus } from "../store/editor";
 import { useNotes } from "../store/notes";
-import { useUi } from "../store/ui";
+import { useUi, type EditorMode } from "../store/ui";
+import { MarkdownPreview } from "./MarkdownPreview";
 
 // The editor (CodeMirror and its language packs) is loaded on first use.
 const MarkdownEditor = lazy(() => import("./MarkdownEditor"));
 const FormatToolbar = lazy(() => import("./FormatToolbar"));
+
+const MODES: { mode: EditorMode; label: string; Icon: typeof Eye }[] = [
+  { mode: "edit", label: "Edit", Icon: Pencil },
+  { mode: "split", label: "Edit and preview", Icon: Columns2 },
+  { mode: "preview", label: "Preview", Icon: Eye },
+];
 
 const STATUS_LABEL: Record<SaveStatus, string> = {
   idle: "",
@@ -88,6 +105,7 @@ export function EditorPane() {
   const setSidebarCollapsed = useUi((s) => s.setSidebarCollapsed);
   const setExplorerCollapsed = useUi((s) => s.setExplorerCollapsed);
   const setPaletteOpen = useUi((s) => s.setPaletteOpen);
+  const mode = useUi((s) => s.editorMode);
   const { noteId, content, status, message, loading, loadError, revision } = useEditor();
   const edit = useEditor((s) => s.edit);
   const keepMine = useEditor((s) => s.keepMine);
@@ -113,7 +131,19 @@ export function EditorPane() {
         >
           <Search aria-hidden className="size-4" />
         </ToolbarButton>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-1">
+          <div role="group" aria-label="View mode" className="flex items-center gap-0.5">
+            {MODES.map(({ mode: m, label, Icon }) => (
+              <ToolbarButton
+                key={m}
+                label={label}
+                pressed={mode === m}
+                onClick={() => changeEditorMode(m)}
+              >
+                <Icon aria-hidden className="size-4" />
+              </ToolbarButton>
+            ))}
+          </div>
           <ToolbarButton label={`Command palette (${mod}+K)`} onClick={() => setPaletteOpen(true)}>
             <CommandIcon aria-hidden className="size-4" />
           </ToolbarButton>
@@ -205,17 +235,30 @@ export function EditorPane() {
           )}
 
           <Suspense fallback={<div className="h-9 border-b border-border" />}>
-            <FormatToolbar />
+            <FormatToolbar disabled={mode === "preview"} />
           </Suspense>
-          <div className="min-h-0 flex-1">
-            <Suspense fallback={<p className="px-7 text-sm text-fg-muted">Loading editor…</p>}>
-              <MarkdownEditor
-                key={`${noteId}:${revision}`}
-                value={content}
-                onChange={edit}
-                onSave={() => void flush()}
-              />
-            </Suspense>
+          <div
+            className={cn(
+              "min-h-0 flex-1",
+              mode === "split" && "grid grid-cols-2 divide-x divide-border",
+            )}
+          >
+            {/* Kept mounted (just hidden) in preview mode so undo history and cursor survive. */}
+            <div className={cn("min-h-0", mode === "preview" && "hidden")}>
+              <Suspense fallback={<p className="px-7 text-sm text-fg-muted">Loading editor…</p>}>
+                <MarkdownEditor
+                  key={`${noteId}:${revision}`}
+                  value={content}
+                  onChange={edit}
+                  onSave={() => void flush()}
+                />
+              </Suspense>
+            </div>
+            {mode !== "edit" && (
+              <div className="min-h-0">
+                <MarkdownPreview noteId={noteId} content={content} />
+              </div>
+            )}
           </div>
         </div>
       ) : (

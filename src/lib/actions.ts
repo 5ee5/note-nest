@@ -1,6 +1,7 @@
 import { toApiError } from "./api";
 import { localDateString } from "./api/mock";
 import type { Theme } from "./theme";
+import type { EditorMode } from "../store/ui";
 import type { Draft } from "./api";
 import { useEditor } from "../store/editor";
 import { useRecovery } from "../store/recovery";
@@ -220,4 +221,10 @@ export async function discardDraft(draft: Draft): Promise<void> {
     await api().discardDraft(draft.noteId);
     useRecovery.getState().remove(draft.noteId);
   });
+}
+
+/** Switches between edit, split and preview, and remembers the choice in the vault's settings. */
+export function changeEditorMode(mode: EditorMode): void {
+  ui().setEditorMode(mode);
+  void attempt("Could not save the view mode", () => api().setSetting("editorMode", mode));
 }

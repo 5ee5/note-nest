@@ -55,6 +55,7 @@ afterEach(() => {
     view: { kind: "all" },
     notices: [],
     prompt: null,
+    editorMode: "edit",
   });
 });
 
@@ -181,6 +182,34 @@ describe("folders", () => {
     await user.click(screen.getByRole("button", { name: "Create" }));
     expect(await screen.findByRole("alert")).toBeTruthy();
     expect(screen.getByText(/Could not create the folder/)).toBeTruthy();
+  });
+});
+
+describe("view modes", () => {
+  it("switches between edit, split and preview and remembers the choice", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByText("Linux"));
+    await screen.findByLabelText("Note content");
+    expect(screen.queryByLabelText("Rendered preview")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Edit and preview" }));
+    expect(await screen.findByLabelText("Rendered preview")).toBeTruthy();
+    expect(screen.getByLabelText("Note content")).toBeTruthy();
+    await waitFor(async () => expect(await api.getSetting("editorMode")).toBe("split"));
+
+    await user.click(screen.getByRole("button", { name: "Preview" }));
+    expect(screen.getByRole("button", { name: "Preview" }).getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+    await waitFor(() =>
+      expect(
+        within(screen.getByLabelText("Rendered preview")).getByText(/Useful commands/),
+      ).toBeTruthy(),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    expect(screen.queryByLabelText("Rendered preview")).toBeNull();
   });
 });
 
