@@ -5,3 +5,4 @@ src-tauri/gen
 *.log
 .DS_Store
 .pnpm-store
+docs/PROJECT_SPEC.md
