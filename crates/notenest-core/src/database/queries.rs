@@ -147,6 +147,39 @@ impl Database {
         Ok(())
     }
 
+    /// Records a folder (and any missing ancestors) in the index.
+    pub async fn ensure_folder(&self, path: &str) -> Result<()> {
+        let mut tx = self.pool().begin().await?;
+        let mut parent: Option<i64> = None;
+        let mut current = String::new();
+        for name in path.split('/') {
+            if !current.is_empty() {
+                current.push('/');
+            }
+            current.push_str(name);
+            let existing = sqlx::query("SELECT id FROM folders WHERE path = ?1")
+                .bind(&current)
+                .fetch_optional(&mut *tx)
+                .await?;
+            let id: i64 = if let Some(row) = existing {
+                row.try_get("id")?
+            } else {
+                sqlx::query(
+                    "INSERT INTO folders (name, parent_id, path) VALUES (?1, ?2, ?3) RETURNING id",
+                )
+                .bind(name)
+                .bind(parent)
+                .bind(&current)
+                .fetch_one(&mut *tx)
+                .await?
+                .try_get("id")?
+            };
+            parent = Some(id);
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
     /// Folder paths, sorted.
     pub async fn list_folders(&self) -> Result<Vec<String>> {
         let rows = sqlx::query("SELECT path FROM folders ORDER BY path")
