@@ -19,7 +19,7 @@ use super::reindex::{reindex, ReindexReport};
 use crate::database::Database;
 use crate::filesystem::atomic::write_atomic;
 use crate::filesystem::trash::TrashEntry;
-use crate::filesystem::{RelPath, Vault};
+use crate::filesystem::{RelPath, Vault, ATTACHMENTS_DIR};
 use crate::frontmatter::{parse_meta, set_meta, MetaUpdate};
 use crate::hash::content_hash;
 use crate::markdown::{render_markdown, ImageContext, RenderLimits, Rendered};
@@ -127,7 +127,9 @@ impl Workspace {
     /// # Errors
     /// [`Error::Database`] on failure.
     pub async fn list_folders(&self) -> Result<Vec<String>> {
-        self.db.list_folders().await
+        let mut folders = self.db.list_folders().await?;
+        folders.retain(|f| !is_attachments_path(f));
+        Ok(folders)
     }
 
     /// # Errors
@@ -393,6 +395,7 @@ impl Workspace {
     pub async fn create_folder(&self, path: &str) -> Result<()> {
         let _g = self.write_lock.lock().await;
         let rel = RelPath::new(path)?;
+        reject_reserved(&rel)?;
         self.vault.create_dir(&rel)?;
         self.db.ensure_folder(rel.as_str()).await
     }
@@ -405,6 +408,8 @@ impl Workspace {
         let _g = self.write_lock.lock().await;
         let from = RelPath::new(path)?;
         let to = child(from.parent().as_ref(), new_name)?;
+        reject_reserved(&from)?;
+        reject_reserved(&to)?;
         self.vault.rename(&from, &to)?;
         reindex(&self.vault, &self.db).await.map(|_| ())
     }
@@ -579,6 +584,20 @@ pub(super) fn preserve_id(on_disk: &[u8], content: &str) -> String {
         ),
         _ => content.to_owned(),
     }
+}
+
+/// True for the attachments folder and anything beneath it.
+pub(super) fn is_attachments_path(path: &str) -> bool {
+    path == ATTACHMENTS_DIR || path.starts_with(&format!("{ATTACHMENTS_DIR}/"))
+}
+
+fn reject_reserved(path: &RelPath) -> Result<()> {
+    if is_attachments_path(path.as_str()) {
+        return Err(Error::InvalidPath(format!(
+            "{path}: the {ATTACHMENTS_DIR} folder is reserved for image attachments"
+        )));
+    }
+    Ok(())
 }
 
 /// Joins a single name onto `dir`; names containing `/` are rejected so a
@@ -942,7 +961,7 @@ mod tests {
     #[tokio::test]
     async fn preview_inlines_images_relative_to_the_note() {
         let (dir, ws) = open().await;
-        ws.create_folder("Attachments").await.unwrap();
+        fs::create_dir(dir.path().join("Attachments")).unwrap();
         ws.create_folder("Notes").await.unwrap();
         fs::write(
             dir.path().join("Attachments/p.png"),

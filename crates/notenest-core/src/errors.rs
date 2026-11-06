@@ -40,6 +40,10 @@ pub enum Error {
         actual: String,
     },
 
+    /// The data is not a file type NoteNest accepts.
+    #[error("unsupported file: {0}")]
+    UnsupportedFile(String),
+
     /// Input exceeds a safety limit.
     #[error("{what} is too large (limit {limit} bytes)")]
     TooLarge { what: String, limit: u64 },
@@ -78,6 +82,7 @@ impl Error {
             Self::AlreadyExists(_) => "already_exists",
             Self::NotFound(_) => "not_found",
             Self::Conflict { .. } => "conflict",
+            Self::UnsupportedFile(_) => "unsupported_file",
             Self::TooLarge { .. } => "too_large",
             Self::VaultNotOpen => "vault_not_open",
             Self::Database(_) => "database",
