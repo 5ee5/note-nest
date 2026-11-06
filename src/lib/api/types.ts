@@ -53,6 +53,20 @@ export interface Draft {
   diskChanged: boolean;
 }
 
+/** Sanitized preview HTML plus images that could not be shown. */
+export interface RenderedMarkdown {
+  html: string;
+  warnings: string[];
+}
+
+/** A stored image attachment. */
+export interface Attachment {
+  /** Path relative to the vault root. */
+  vaultPath: string;
+  /** Path relative to the note that references it, ready for `![](...)`. */
+  markdownPath: string;
+}
+
 export interface NotesApi {
   /** True for sample data that is never written to disk. */
   readonly isSample: boolean;
@@ -83,6 +97,15 @@ export interface NotesApi {
   stashDraft(id: string, content: string, baseHash: string): Promise<void>;
   listDrafts(): Promise<Draft[]>;
   discardDraft(id: string): Promise<void>;
+
+  /** Renders Markdown to sanitized HTML. `noteId` anchors relative image paths. */
+  renderMarkdown(noteId: string | null, content: string): Promise<RenderedMarkdown>;
+  /** Stores an image; the content decides the file type, `suggestedName` only the stem. */
+  addAttachment(
+    noteId: string,
+    data: Uint8Array,
+    suggestedName?: string | null,
+  ): Promise<Attachment>;
 
   getSetting(key: string): Promise<string | null>;
   setSetting(key: string, value: string): Promise<void>;

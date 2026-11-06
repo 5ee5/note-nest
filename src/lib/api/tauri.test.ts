@@ -32,27 +32,48 @@ describe("TauriNotesApi", () => {
       createdAt: "2026-01-01T00:00:00Z",
       lastOpenedAt: null,
     });
-    expect(invoke).toHaveBeenCalledWith("list_notes", undefined);
+    expect(invoke).toHaveBeenCalledWith("list_notes", undefined, undefined);
   });
 
   it("sends the right arguments when saving", async () => {
     invoke.mockResolvedValue({ record, content: "x" });
     const api = new TauriNotesApi();
     await api.saveNote("id", "text", { baseHash: "h" });
-    expect(invoke).toHaveBeenLastCalledWith("save_note", {
-      id: "id",
-      content: "text",
-      baseHash: "h",
-      overwrite: false,
-    });
+    expect(invoke).toHaveBeenLastCalledWith(
+      "save_note",
+      { id: "id", content: "text", baseHash: "h", overwrite: false },
+      undefined,
+    );
     const doc = await api.saveNote("id", "text", { overwrite: true });
-    expect(invoke).toHaveBeenLastCalledWith("save_note", {
-      id: "id",
-      content: "text",
-      baseHash: null,
-      overwrite: true,
-    });
+    expect(invoke).toHaveBeenLastCalledWith(
+      "save_note",
+      { id: "id", content: "text", baseHash: null, overwrite: true },
+      undefined,
+    );
     expect(doc.contentHash).toBe("abc");
+  });
+
+  it("sends attachments as a raw body with metadata in headers", async () => {
+    invoke.mockResolvedValueOnce({
+      vault_path: "Attachments/image-001.png",
+      markdown_path: "../Attachments/image-001.png",
+    });
+    const bytes = new Uint8Array([1, 2, 3]);
+    const out = await new TauriNotesApi().addAttachment("note-id", bytes, "my pic.png");
+    expect(invoke).toHaveBeenCalledWith("add_attachment", bytes, {
+      headers: { "x-note-id": "note-id", "x-file-name": "my%20pic.png" },
+    });
+    expect(out).toEqual({
+      vaultPath: "Attachments/image-001.png",
+      markdownPath: "../Attachments/image-001.png",
+    });
+  });
+
+  it("renders markdown through the backend", async () => {
+    invoke.mockResolvedValueOnce({ html: "<p>x</p>", warnings: ["w"] });
+    const out = await new TauriNotesApi().renderMarkdown("id", "x");
+    expect(invoke).toHaveBeenCalledWith("render_markdown", { id: "id", content: "x" }, undefined);
+    expect(out).toEqual({ html: "<p>x</p>", warnings: ["w"] });
   });
 
   it("turns Tauri rejections into ApiError with a code", async () => {

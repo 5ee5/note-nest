@@ -57,6 +57,27 @@ describe("MockNotesApi", () => {
     expect((await api.listNotes())[0]?.path).toBe("F/N.md");
   });
 
+  it("previews are escaped text, never live HTML", async () => {
+    const out = await empty().renderMarkdown(null, "<script>alert(1)</script> & more");
+    expect(out.html).toBe("<pre>&lt;script&gt;alert(1)&lt;/script&gt; &amp; more</pre>");
+  });
+
+  it("attachments are numbered, typed by content and relative to the note", async () => {
+    const api = empty();
+    await api.createFolder("A");
+    const n = await api.createNote("A", "N");
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 0]);
+    const first = await api.addAttachment(n.id, png, "Shot 1.png");
+    expect(first).toEqual({
+      vaultPath: "Attachments/Shot-1-001.png",
+      markdownPath: "../Attachments/Shot-1-001.png",
+    });
+    expect((await api.addAttachment(n.id, png)).vaultPath).toBe("Attachments/image-002.png");
+    await expect(api.addAttachment(n.id, new Uint8Array([1, 2, 3]))).rejects.toMatchObject({
+      code: "unsupported_file",
+    });
+  });
+
   it("saves are guarded by the base hash", async () => {
     const api = empty();
     const a = await api.createNote(null, "A");

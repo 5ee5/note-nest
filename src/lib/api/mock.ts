@@ -1,5 +1,14 @@
 import { ApiError } from "./errors";
-import type { Draft, NoteDoc, NoteSummary, NotesApi, SaveMode, TrashItem } from "./types";
+import type {
+  Attachment,
+  Draft,
+  NoteDoc,
+  NoteSummary,
+  NotesApi,
+  RenderedMarkdown,
+  SaveMode,
+  TrashItem,
+} from "./types";
 
 export function localDateString(date = new Date()): string {
   const y = date.getFullYear();
@@ -46,6 +55,19 @@ function validName(name: string): void {
   }
 }
 
+/** Extension for the image types the app accepts, decided from the leading bytes. */
+function sniffImage(b: Uint8Array): string | null {
+  const starts = (...bytes: number[]) => bytes.every((v, i) => b[i] === v);
+  if (starts(0x89, 0x50, 0x4e, 0x47)) return "png";
+  if (starts(0xff, 0xd8, 0xff)) return "jpg";
+  if (starts(0x47, 0x49, 0x46, 0x38)) return "gif";
+  if (starts(0x52, 0x49, 0x46, 0x46) && b[8] === 0x57 && b[9] === 0x45) return "webp";
+  const head = new TextDecoder().decode(b.slice(0, 256)).trimStart().toLowerCase();
+  return head.startsWith("<svg") || (head.startsWith("<?xml") && head.includes("<svg"))
+    ? "svg"
+    : null;
+}
+
 function previewOf(content: string): string {
   return content.replace(/\s+/g, " ").trim().slice(0, 120);
 }
@@ -59,6 +81,7 @@ export class MockNotesApi implements NotesApi {
   private drafts = new Map<string, Draft>();
   private settings = new Map<string, string>();
   private counter = 0;
+  private attachments = 0;
 
   constructor(options: { sample?: boolean } = {}) {
     if (options.sample ?? true) this.seed();
@@ -390,6 +413,39 @@ export class MockNotesApi implements NotesApi {
   async discardDraft(id: string): Promise<void> {
     this.drafts.delete(id);
     return Promise.resolve();
+  }
+
+  /** The mock has no Markdown engine: it shows the text escaped, which is always safe. */
+  async renderMarkdown(_noteId: string | null, content: string): Promise<RenderedMarkdown> {
+    const escaped = content.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    return { html: `<pre>${escaped}</pre>`, warnings: [] };
+  }
+
+  async addAttachment(
+    noteId: string,
+    data: Uint8Array,
+    suggestedName?: string | null,
+  ): Promise<Attachment> {
+    const note = this.get(noteId).note;
+    const kind = sniffImage(data);
+    if (!kind) {
+      throw new ApiError(
+        "unsupported_file",
+        "only PNG, JPEG, GIF, WebP and SVG images can be attached",
+      );
+    }
+    this.attachments += 1;
+    const stem =
+      (suggestedName ?? "")
+        .replace(/\.[^.]*$/, "")
+        .replace(/[^A-Za-z0-9_]+/g, "-")
+        .replace(/^-+|-+$/g, "") || "image";
+    const name = `${stem}-${String(this.attachments).padStart(3, "0")}.${kind}`;
+    const depth = note.path.split("/").length - 1;
+    return {
+      vaultPath: `Attachments/${name}`,
+      markdownPath: `${"../".repeat(depth)}Attachments/${name}`,
+    };
   }
 
   async getSetting(key: string): Promise<string | null> {

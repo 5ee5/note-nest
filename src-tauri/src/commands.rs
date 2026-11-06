@@ -2,8 +2,9 @@ use std::path::{Path, PathBuf};
 
 use notenest_core::config::AppConfig;
 use notenest_core::filesystem::trash::TrashEntry;
+use notenest_core::markdown::Rendered;
 use notenest_core::models::NoteRecord;
-use notenest_core::services::{Draft, NoteContent, SaveMode, Workspace};
+use notenest_core::services::{Attachment, Draft, NoteContent, SaveMode, Workspace};
 use notenest_core::{Error, Result};
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
@@ -274,4 +275,60 @@ pub async fn get_setting(state: State<'_, AppState>, key: String) -> Result<Opti
 #[tauri::command]
 pub async fn set_setting(state: State<'_, AppState>, key: String, value: String) -> Result<()> {
     state.workspace().await?.set_setting(&key, &value).await
+}
+
+/// Renders note text for the preview (sanitized HTML).
+#[tauri::command]
+pub async fn render_markdown(
+    state: State<'_, AppState>,
+    id: Option<Uuid>,
+    content: String,
+) -> Result<Rendered> {
+    state.workspace().await?.render_markdown(id, content).await
+}
+
+/// Stores an image for a note. The image bytes are the raw request body (not a JSON
+/// array, which would be huge); the note id and suggested file name travel in the
+/// `x-note-id` and `x-file-name` (URL-encoded, optional) headers.
+#[tauri::command]
+pub async fn add_attachment(
+    state: State<'_, AppState>,
+    request: tauri::ipc::Request<'_>,
+) -> Result<Attachment> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err(Error::InvalidPath(
+            "attachment bytes must be sent as a raw body".into(),
+        ));
+    };
+    let header = |name: &str| request.headers().get(name).and_then(|v| v.to_str().ok());
+    let note_id = header("x-note-id")
+        .and_then(|v| Uuid::parse_str(v).ok())
+        .ok_or_else(|| Error::InvalidPath("missing or invalid x-note-id header".into()))?;
+    let name = header("x-file-name").map(percent_decode);
+    state
+        .workspace()
+        .await?
+        .add_attachment(note_id, bytes, name.as_deref())
+        .await
+}
+
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = (bytes[i] == b'%')
+            .then(|| bytes.get(i + 1..i + 3))
+            .flatten()
+            .and_then(|h| std::str::from_utf8(h).ok())
+            .and_then(|h| u8::from_str_radix(h, 16).ok());
+        if let Some(b) = hex {
+            out.push(b);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }

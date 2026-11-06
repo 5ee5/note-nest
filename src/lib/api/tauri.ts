@@ -1,6 +1,15 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, type InvokeArgs, type InvokeOptions } from "@tauri-apps/api/core";
 import { toApiError } from "./errors";
-import type { Draft, NoteDoc, NoteSummary, NotesApi, SaveMode, TrashItem } from "./types";
+import type {
+  Attachment,
+  Draft,
+  NoteDoc,
+  NoteSummary,
+  NotesApi,
+  RenderedMarkdown,
+  SaveMode,
+  TrashItem,
+} from "./types";
 
 // Shapes returned by the Rust commands (snake_case, see crates/notenest-core).
 interface NoteRecord {
@@ -72,9 +81,9 @@ function toDraft(d: DraftDto): Draft {
 }
 
 /** Calls a Rust command, normalizing rejections into `ApiError`. */
-export async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+export async function call<T>(cmd: string, args?: InvokeArgs, options?: InvokeOptions): Promise<T> {
   try {
-    return await invoke<T>(cmd, args);
+    return await invoke<T>(cmd, args, options);
   } catch (e) {
     throw toApiError(e);
   }
@@ -170,6 +179,24 @@ export class TauriNotesApi implements NotesApi {
 
   discardDraft(id: string): Promise<void> {
     return call("discard_draft", { id });
+  }
+
+  renderMarkdown(noteId: string | null, content: string): Promise<RenderedMarkdown> {
+    return call("render_markdown", { id: noteId, content });
+  }
+
+  async addAttachment(
+    noteId: string,
+    data: Uint8Array,
+    suggestedName?: string | null,
+  ): Promise<Attachment> {
+    // Raw body (not a JSON array); metadata travels in headers.
+    const headers: Record<string, string> = { "x-note-id": noteId };
+    if (suggestedName) headers["x-file-name"] = encodeURIComponent(suggestedName);
+    const r = await call<{ vault_path: string; markdown_path: string }>("add_attachment", data, {
+      headers,
+    });
+    return { vaultPath: r.vault_path, markdownPath: r.markdown_path };
   }
 
   getSetting(key: string): Promise<string | null> {

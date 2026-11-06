@@ -12,6 +12,7 @@ mod state;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(state::AppState::default())
         .invoke_handler(tauri::generate_handler![
             commands::app_info,
@@ -41,6 +42,8 @@ pub fn run() {
             commands::discard_draft,
             commands::get_setting,
             commands::set_setting,
+            commands::render_markdown,
+            commands::add_attachment,
         ])
         .run(tauri::generate_context!())
         .expect("error while running NoteNest");
