@@ -1,7 +1,14 @@
 //! NoteNest core library.
 //!
 //! This crate must stay independent of Tauri so that it can be tested and
-//! reused without a GUI. The notes engine is not implemented yet.
+//! reused without a GUI. Markdown files in the vault are the source of truth;
+//! everything else (the SQLite index) is derived and rebuildable.
+
+pub mod errors;
+pub mod filesystem;
+pub mod hash;
+
+pub use errors::{Error, Result};
 
 /// Application name.
 pub const APP_NAME: &str = "NoteNest";
