@@ -15,7 +15,10 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
 notenest-core = { path = "../crates/notenest-core" }
+serde = { version = "1", features = ["derive"] }
+uuid = { version = "1", features = ["serde"] }
 
 [lints]
 workspace = true

@@ -40,6 +40,10 @@ pub enum Error {
         actual: String,
     },
 
+    /// A command needing an open vault was called before one was opened.
+    #[error("no vault is open")]
+    VaultNotOpen,
+
     /// A database operation failed.
     #[error("database error: {0}")]
     Database(#[from] sqlx::Error),
@@ -70,6 +74,7 @@ impl Error {
             Self::AlreadyExists(_) => "already_exists",
             Self::NotFound(_) => "not_found",
             Self::Conflict { .. } => "conflict",
+            Self::VaultNotOpen => "vault_not_open",
             Self::Database(_) => "database",
             Self::Migration(_) => "migration",
             Self::Corrupt { .. } => "corrupt",
