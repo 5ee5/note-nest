@@ -3,11 +3,11 @@
 Local-first, privacy-focused Markdown note-taking and personal knowledge management app.
 Markdown files are the source of truth; no accounts or cloud services required.
 
-**Status:** Milestone 0 (project foundation). The notes engine is not implemented yet.
+**Status:** Milestone 1 (UI foundation). The UI runs on sample data; the storage engine is not implemented yet.
 
 ## Stack
 
-Rust, Tauri 2, React, TypeScript, Tailwind CSS, pnpm. (SQLite and CodeMirror 6 arrive in later milestones.)
+Rust, Tauri 2, React, TypeScript, Tailwind CSS, Zustand, pnpm. (SQLite and CodeMirror 6 arrive in later milestones.)
 
 ## Layout
 
