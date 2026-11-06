@@ -22,6 +22,7 @@ use crate::filesystem::trash::TrashEntry;
 use crate::filesystem::{RelPath, Vault};
 use crate::frontmatter::{parse_meta, set_meta, MetaUpdate};
 use crate::hash::content_hash;
+use crate::markdown::{render_markdown, ImageContext, RenderLimits, Rendered};
 use crate::models::{note_id_for_path, title_from_path, NoteRecord};
 use crate::{Error, Result};
 
@@ -354,6 +355,33 @@ impl Workspace {
         let entry = self.vault.trash(&RelPath::new(&record.path)?)?;
         self.db.delete_note(id).await?;
         Ok(entry)
+    }
+
+    /// Renders note text to sanitized HTML for the preview. Relative image paths are
+    /// resolved from the folder of note `id`; without an id no images are inlined.
+    /// Runs off the async executor so a large note cannot stall the UI.
+    ///
+    /// # Errors
+    /// [`Error::NotFound`] for an unknown id; [`Error::TooLarge`] for oversized input.
+    pub async fn render_markdown(&self, id: Option<Uuid>, content: String) -> Result<Rendered> {
+        let images = match id {
+            Some(id) => {
+                let record = self.record(id).await?;
+                Some(ImageContext {
+                    vault: self.vault.clone(),
+                    note_dir: RelPath::new(&record.path)?.parent(),
+                })
+            }
+            None => None,
+        };
+        tokio::task::spawn_blocking(move || {
+            render_markdown(&content, images, &RenderLimits::default())
+        })
+        .await
+        .map_err(|e| Error::Io {
+            path: PathBuf::from("<markdown renderer>"),
+            source: std::io::Error::other(e),
+        })?
     }
 
     // ---------------------------------------------------------------- folders
@@ -908,6 +936,35 @@ mod tests {
         assert!(matches!(
             ws.create_folder("Archive").await,
             Err(Error::AlreadyExists(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn preview_inlines_images_relative_to_the_note() {
+        let (dir, ws) = open().await;
+        ws.create_folder("Attachments").await.unwrap();
+        ws.create_folder("Notes").await.unwrap();
+        fs::write(
+            dir.path().join("Attachments/p.png"),
+            b"\x89PNG\r\n\x1a\nxxxx",
+        )
+        .unwrap();
+        let n = ws.create_note(Some("Notes"), Some("N")).await.unwrap();
+
+        let r = ws
+            .render_markdown(Some(n.id), "# T\n\n![p](../Attachments/p.png)".into())
+            .await
+            .unwrap();
+        assert!(r.html.contains("data:image/png;base64,") && r.warnings.is_empty());
+        // Without a note there is nothing to resolve paths against.
+        let r = ws
+            .render_markdown(None, "![p](Attachments/p.png)".into())
+            .await
+            .unwrap();
+        assert!(!r.html.contains("data:image"));
+        assert!(matches!(
+            ws.render_markdown(Some(Uuid::new_v4()), "x".into()).await,
+            Err(Error::NotFound(_))
         ));
     }
 

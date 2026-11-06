@@ -72,6 +72,17 @@ fn key_value(line: &str) -> Option<(&str, &str)> {
     Some((k.trim_end(), v))
 }
 
+/// The note text without its leading frontmatter block (and BOM). Text without a
+/// block is returned unchanged.
+#[must_use]
+pub fn body(content: &str) -> &str {
+    let text = content.strip_prefix(BOM).unwrap_or(content);
+    match find_block(text) {
+        Some(block) => &text[block.after..],
+        None => text,
+    }
+}
+
 /// Reads NoteNest metadata from note content. Malformed values are ignored.
 #[must_use]
 pub fn parse_meta(content: &str) -> Meta {
@@ -217,6 +228,14 @@ mod tests {
             id: Some(id()),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn body_skips_the_frontmatter_block() {
+        assert_eq!(body("---\ntitle: x\n---\n# Hi\n"), "# Hi\n");
+        assert_eq!(body("\u{feff}---\r\nid: a\r\n---\r\nText"), "Text");
+        assert_eq!(body("# No block\n"), "# No block\n");
+        assert_eq!(body("---\nunclosed\n"), "---\nunclosed\n");
     }
 
     #[test]

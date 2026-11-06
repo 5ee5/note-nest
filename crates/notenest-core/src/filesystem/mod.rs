@@ -1,6 +1,7 @@
 //! All vault filesystem access lives here.
 
 pub mod atomic;
+pub mod image;
 pub mod path;
 pub mod trash;
 pub mod vault;

@@ -10,6 +10,7 @@ pub mod errors;
 pub mod filesystem;
 pub mod frontmatter;
 pub mod hash;
+pub mod markdown;
 pub mod models;
 pub mod services;
 

@@ -102,6 +102,20 @@ impl Vault {
         })
     }
 
+    /// Size in bytes of a regular file.
+    ///
+    /// # Errors
+    /// [`Error::NotFound`] if missing or not a regular file; [`Error::InvalidPath`] on symlinks.
+    pub fn file_size(&self, rel: &RelPath) -> Result<u64> {
+        let path = self.resolve(rel)?;
+        match fs::metadata(&path) {
+            Ok(m) if m.is_file() => Ok(m.len()),
+            Ok(_) => Err(Error::NotFound(rel.to_string())),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Err(Error::NotFound(rel.to_string())),
+            Err(e) => Err(Error::io(path, e)),
+        }
+    }
+
     /// Atomically replaces (or creates) a file whose parent folder exists.
     ///
     /// # Errors

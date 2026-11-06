@@ -40,6 +40,10 @@ pub enum Error {
         actual: String,
     },
 
+    /// Input exceeds a safety limit.
+    #[error("{what} is too large (limit {limit} bytes)")]
+    TooLarge { what: String, limit: u64 },
+
     /// A command needing an open vault was called before one was opened.
     #[error("no vault is open")]
     VaultNotOpen,
@@ -74,6 +78,7 @@ impl Error {
             Self::AlreadyExists(_) => "already_exists",
             Self::NotFound(_) => "not_found",
             Self::Conflict { .. } => "conflict",
+            Self::TooLarge { .. } => "too_large",
             Self::VaultNotOpen => "vault_not_open",
             Self::Database(_) => "database",
             Self::Migration(_) => "migration",
