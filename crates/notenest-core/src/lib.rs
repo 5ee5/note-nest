@@ -4,9 +4,13 @@
 //! reused without a GUI. Markdown files in the vault are the source of truth;
 //! everything else (the SQLite index) is derived and rebuildable.
 
+pub mod database;
 pub mod errors;
 pub mod filesystem;
+pub mod frontmatter;
 pub mod hash;
+pub mod models;
+pub mod services;
 
 pub use errors::{Error, Result};
 

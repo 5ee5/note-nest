@@ -40,6 +40,14 @@ pub enum Error {
         actual: String,
     },
 
+    /// A database operation failed.
+    #[error("database error: {0}")]
+    Database(#[from] sqlx::Error),
+
+    /// Applying schema migrations failed.
+    #[error("database migration failed: {0}")]
+    Migration(#[from] sqlx::migrate::MigrateError),
+
     /// Stored data could not be parsed.
     #[error("corrupt data in {context}: {message}")]
     Corrupt { context: String, message: String },
@@ -62,6 +70,8 @@ impl Error {
             Self::AlreadyExists(_) => "already_exists",
             Self::NotFound(_) => "not_found",
             Self::Conflict { .. } => "conflict",
+            Self::Database(_) => "database",
+            Self::Migration(_) => "migration",
             Self::Corrupt { .. } => "corrupt",
         }
     }
