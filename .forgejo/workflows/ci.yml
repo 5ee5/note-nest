@@ -1,0 +1,39 @@
+# Forgejo Actions workflow.
+# Assumes a Linux runner with Docker and the label `docker`; adjust `runs-on` to match your runner.
+# Jobs run inside a Debian image so the Tauri system dependencies can be installed with apt.
+# macOS/Windows builds are not covered (they need runners with those labels).
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: docker
+    container:
+      image: node:22-bookworm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            libssl-dev libxdo-dev patchelf pkg-config
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal -c rustfmt -c clippy
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Install pnpm
+        run: npm install -g pnpm@10.34.9
+
+      - run: pnpm install --frozen-lockfile
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm tauri build --no-bundle
