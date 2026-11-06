@@ -5,6 +5,8 @@ export type View =
   | { kind: "favorites" }
   | { kind: "recent" }
   | { kind: "daily" }
+  | { kind: "archived" }
+  | { kind: "trash" }
   | { kind: "tag"; value: string }
   | { kind: "folder"; value: string };
 
@@ -26,6 +28,10 @@ export function viewLabel(view: View): string {
       return "Recently opened";
     case "daily":
       return "Daily notes";
+    case "archived":
+      return "Archive";
+    case "trash":
+      return "Trash";
     case "tag":
       return `#${view.value}`;
     case "folder":
@@ -34,11 +40,16 @@ export function viewLabel(view: View): string {
 }
 
 function inView(note: NoteSummary, view: View): boolean {
+  // Archived notes only appear in the Archive view.
+  if (view.kind === "archived") return note.archived;
+  if (note.archived) return false;
   switch (view.kind) {
     case "all":
       return true;
+    case "trash":
+      return false;
     case "favorites":
-      return note.favorite;
+      return note.pinned;
     case "recent":
       return note.lastOpenedAt !== null;
     case "daily":

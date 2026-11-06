@@ -3,11 +3,11 @@
 Local-first, privacy-focused Markdown note-taking and personal knowledge management app.
 Markdown files are the source of truth; no accounts or cloud services required.
 
-**Status:** Milestone 1 (UI foundation). The UI runs on sample data; the storage engine is not implemented yet.
+**Status:** Milestone 2 (storage engine): notes are real Markdown files in a vault folder, with autosave, folders, trash and crash recovery. The editor is a plain textarea until Milestone 3.
 
 ## Stack
 
-Rust, Tauri 2, React, TypeScript, Tailwind CSS, Zustand, pnpm. (SQLite and CodeMirror 6 arrive in later milestones.)
+Rust, Tauri 2, React, TypeScript, Tailwind CSS, Zustand, SQLite (sqlx), pnpm. (CodeMirror 6 arrives in Milestone 3.)
 
 ## Layout
 
@@ -26,6 +26,7 @@ pnpm install
 pnpm tauri dev      # run the desktop app
 pnpm dev            # frontend only, in a browser
 pnpm lint && pnpm test && pnpm build
+scripts/docker-check.sh 'cargo clippy --workspace --all-targets -- -D warnings'   # no WebKitGTK needed
 cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
 ```
 

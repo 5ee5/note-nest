@@ -1,5 +1,5 @@
 import { Command } from "cmdk";
-import { createNote, openDailyNote, openNote } from "../lib/actions";
+import { changeTheme, createFolder, createNote, openDailyNote, openNote } from "../lib/actions";
 import { THEMES, type Theme } from "../lib/theme";
 import { isDailyNote, type View } from "../lib/notes";
 import { useNotes } from "../store/notes";
@@ -19,7 +19,7 @@ const groupClass =
 export function CommandPalette() {
   const open = useUi((s) => s.paletteOpen);
   const setOpen = useUi((s) => s.setPaletteOpen);
-  const setTheme = useUi((s) => s.setTheme);
+  const openPrompt = useUi((s) => s.openPrompt);
   const setView = useUi((s) => s.setView);
   const setSettingsOpen = useUi((s) => s.setSettingsOpen);
   const sidebarCollapsed = useUi((s) => s.sidebarCollapsed);
@@ -57,6 +57,19 @@ export function CommandPalette() {
           <Command.Item className={itemClass} onSelect={run(createNote)}>
             Create note
           </Command.Item>
+          <Command.Item
+            className={itemClass}
+            onSelect={run(() =>
+              openPrompt({
+                title: "New folder",
+                label: "Folder name",
+                confirmLabel: "Create",
+                onSubmit: async (n) => void (await createFolder(n)),
+              }),
+            )}
+          >
+            Create folder
+          </Command.Item>
           <Command.Item className={itemClass} onSelect={run(openDailyNote)}>
             Create daily note
           </Command.Item>
@@ -79,7 +92,7 @@ export function CommandPalette() {
 
         <Command.Group heading="Theme" className={groupClass}>
           {THEMES.map((t) => (
-            <Command.Item key={t} className={itemClass} onSelect={run(() => setTheme(t))}>
+            <Command.Item key={t} className={itemClass} onSelect={run(() => changeTheme(t))}>
               Switch theme: {THEME_LABELS[t]}
             </Command.Item>
           ))}
@@ -97,6 +110,12 @@ export function CommandPalette() {
           </Command.Item>
           <Command.Item className={itemClass} onSelect={go({ kind: "daily" })}>
             Go to Daily notes
+          </Command.Item>
+          <Command.Item className={itemClass} onSelect={go({ kind: "archived" })}>
+            Go to Archive
+          </Command.Item>
+          <Command.Item className={itemClass} onSelect={go({ kind: "trash" })}>
+            Go to Trash
           </Command.Item>
           {folders.map((f) => (
             <Command.Item

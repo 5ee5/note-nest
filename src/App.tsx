@@ -1,22 +1,21 @@
 import { useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { isTauri } from "./lib/api";
 import { AppLayout } from "./components/AppLayout";
 import { CommandPalette } from "./components/CommandPalette";
+import { Notices } from "./components/Notices";
+import { PromptDialog } from "./components/PromptDialog";
+import { RecoveryDialog } from "./components/RecoveryDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
+import { VaultGate } from "./components/VaultGate";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useThemeSync } from "./hooks/useThemeSync";
-import { useNotes } from "./store/notes";
-
-function isTauri(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-}
 
 export default function App() {
   useThemeSync();
   useGlobalShortcuts();
 
   useEffect(() => {
-    void useNotes.getState().load();
     if (isTauri()) {
       invoke<string>("app_info")
         .then((info) => console.info(info))
@@ -26,9 +25,14 @@ export default function App() {
 
   return (
     <div className="h-screen bg-bg text-fg">
-      <AppLayout />
-      <CommandPalette />
-      <SettingsDialog />
+      <VaultGate>
+        <AppLayout />
+        <CommandPalette />
+        <SettingsDialog />
+        <PromptDialog />
+        <RecoveryDialog />
+      </VaultGate>
+      <Notices />
     </div>
   );
 }

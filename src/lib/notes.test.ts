@@ -8,7 +8,8 @@ const note = (id: string, over: Partial<NoteSummary> = {}): NoteSummary => ({
   path: `${id}.md`,
   folder: "",
   tags: [],
-  favorite: false,
+  pinned: false,
+  archived: false,
   preview: "",
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
@@ -20,7 +21,7 @@ const NOTES = [
   note("a", { title: "Alpha", updatedAt: "2026-01-02T00:00:00.000Z", tags: ["programming/rust"] }),
   note("b", {
     title: "Beta",
-    favorite: true,
+    pinned: true,
     folder: "Programming",
     lastOpenedAt: "2026-02-01T00:00:00.000Z",
     updatedAt: "2026-01-03T00:00:00.000Z",
@@ -52,6 +53,14 @@ describe("selectNotes", () => {
     expect(ids({ kind: "daily" })).toEqual(["c"]);
     expect(ids({ kind: "folder", value: "Programming" })).toEqual(["b"]);
     expect(ids({ kind: "tag", value: "programming" })).toEqual(["a"]);
+  });
+
+  it("hides archived notes everywhere except the Archive view", () => {
+    const withArchived = [...NOTES, note("z", { title: "Old", archived: true })];
+    const ids = (v: Parameters<typeof selectNotes>[1]) =>
+      selectNotes(withArchived, v, "title", "").map((n) => n.id);
+    expect(ids({ kind: "all" })).not.toContain("z");
+    expect(ids({ kind: "archived" })).toEqual(["z"]);
   });
 
   it("orders recently opened by open time", () => {

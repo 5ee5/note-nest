@@ -1,49 +1,36 @@
 import { describe, expect, it } from "vitest";
 import { MockNotesApi } from "../lib/api/mock";
-import type { NotesApi } from "../lib/api/types";
+import { ApiError, type NotesApi } from "../lib/api";
 import { createNotesStore } from "./notes";
 
 describe("notes store", () => {
-  it("loads notes and folders from the api", async () => {
+  it("loads notes, folders and trash from the api", async () => {
     const store = createNotesStore(new MockNotesApi());
     await store.getState().load();
-    expect(store.getState().status).toBe("ready");
-    expect(store.getState().notes.length).toBeGreaterThan(0);
-    expect(store.getState().folders).toContain("Programming");
+    const s = store.getState();
+    expect(s.status).toBe("ready");
+    expect(s.notes.length).toBeGreaterThan(0);
+    expect(s.folders).toContain("Programming");
+    expect(s.trash).toEqual([]);
   });
 
-  it("creates notes with unique ids", async () => {
+  it("applyNote replaces an existing note or appends a new one", async () => {
     const store = createNotesStore(new MockNotesApi());
     await store.getState().load();
-    const before = store.getState().notes.length;
-    const a = await store.getState().createNote();
-    const b = await store.getState().createNote();
-    expect(a && b && a.id !== b.id).toBe(true);
-    expect(store.getState().notes.length).toBe(before + 2);
-  });
-
-  it("returns the same daily note when opened twice", async () => {
-    const store = createNotesStore(new MockNotesApi());
-    await store.getState().load();
-    const a = await store.getState().openDailyNote();
-    const b = await store.getState().openDailyNote();
-    expect(a?.id).toBe(b?.id);
+    const first = store.getState().notes[0]!;
+    store.getState().applyNote({ ...first, title: "Changed" });
+    expect(store.getState().notes.find((n) => n.id === first.id)?.title).toBe("Changed");
+    const count = store.getState().notes.length;
+    store.getState().applyNote({ ...first, id: "brand-new" });
+    expect(store.getState().notes.length).toBe(count + 1);
   });
 
   it("surfaces backend errors instead of swallowing them", async () => {
-    const failing: NotesApi = {
-      ...new MockNotesApi(),
-      listNotes: () => Promise.reject(new Error("disk on fire")),
-      listFolders: () => Promise.resolve([]),
-      createNote: () => Promise.reject(new Error("cannot create")),
-      openDailyNote: () => Promise.reject(new Error("cannot open")),
-      markOpened: () => Promise.resolve(),
-    };
+    const failing = new MockNotesApi() as NotesApi;
+    failing.listNotes = () => Promise.reject(new ApiError("io", "disk on fire"));
     const store = createNotesStore(failing);
     await store.getState().load();
     expect(store.getState().status).toBe("error");
     expect(store.getState().error).toBe("disk on fire");
-    expect(await store.getState().createNote()).toBeNull();
-    expect(store.getState().error).toBe("cannot create");
   });
 });

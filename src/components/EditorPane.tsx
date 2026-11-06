@@ -1,7 +1,29 @@
-import { PanelLeft, Command as CommandIcon, Search } from "lucide-react";
+import { useState } from "react";
+import {
+  Archive,
+  ArchiveRestore,
+  Command as CommandIcon,
+  Copy,
+  PanelLeft,
+  Search,
+  Star,
+  Trash2,
+} from "lucide-react";
+import { deleteNote, duplicateNote, renameNote, setArchived, setPinned } from "../lib/actions";
+import { modLabel } from "../lib/shortcuts";
+import { cn } from "../lib/cn";
+import { useEditor, type SaveStatus } from "../store/editor";
 import { useNotes } from "../store/notes";
 import { useUi } from "../store/ui";
-import { modLabel } from "../lib/shortcuts";
+
+const STATUS_LABEL: Record<SaveStatus, string> = {
+  idle: "",
+  dirty: "Unsaved changes",
+  saving: "Saving…",
+  saved: "Saved",
+  error: "Save failed",
+  conflict: "Changed on disk",
+};
 
 function ToolbarButton({
   label,
@@ -21,10 +43,36 @@ function ToolbarButton({
       title={label}
       aria-pressed={pressed}
       onClick={onClick}
-      className="rounded-md p-1.5 text-fg-muted hover:bg-surface-hover"
+      className={cn("rounded-md p-1.5 text-fg-muted hover:bg-surface-hover", pressed && "text-fg")}
     >
       {children}
     </button>
+  );
+}
+
+/** Editable note title; committing renames the file. */
+function TitleInput({ id, title }: { id: string; title: string }) {
+  const [value, setValue] = useState(title);
+  const commit = async () => {
+    const next = value.trim();
+    if (next === title) return;
+    if (next === "" || !(await renameNote(id, next))) setValue(title);
+  };
+  return (
+    <input
+      aria-label="Note title"
+      value={value}
+      onChange={(e) => setValue(e.target.value)}
+      onBlur={() => void commit()}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+        if (e.key === "Escape") {
+          setValue(title);
+          e.currentTarget.blur();
+        }
+      }}
+      className="min-w-0 flex-1 rounded-md bg-transparent px-1 py-0.5 text-xl font-semibold hover:bg-surface-hover focus:bg-surface"
+    />
   );
 }
 
@@ -36,7 +84,12 @@ export function EditorPane() {
   const setSidebarCollapsed = useUi((s) => s.setSidebarCollapsed);
   const setExplorerCollapsed = useUi((s) => s.setExplorerCollapsed);
   const setPaletteOpen = useUi((s) => s.setPaletteOpen);
-  const note = notes.find((n) => n.id === selectedNoteId) ?? null;
+  const { noteId, content, status, message, loading, loadError } = useEditor();
+  const edit = useEditor((s) => s.edit);
+  const keepMine = useEditor((s) => s.keepMine);
+  const loadTheirs = useEditor((s) => s.loadTheirs);
+  const flush = useEditor((s) => s.flush);
+  const note = notes.find((n) => n.id === (noteId ?? selectedNoteId)) ?? null;
   const mod = modLabel();
 
   return (
@@ -63,19 +116,106 @@ export function EditorPane() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-8">
-        {note ? (
-          <article>
-            <h1 className="text-2xl font-semibold">{note.title}</h1>
-            <p className="mt-1 text-xs text-fg-muted">{note.path}</p>
-            <p className="mt-8 text-sm text-fg-muted">
-              The Markdown editor arrives in a later milestone.
-            </p>
-          </article>
-        ) : (
-          <p className="text-sm text-fg-muted">Select a note, or press {mod}+N to create one.</p>
-        )}
-      </div>
+      {loadError ? (
+        <div className="p-8">
+          <p role="alert" className="rounded-md border border-border px-3 py-2 text-sm">
+            This note cannot be opened: {loadError}
+          </p>
+        </div>
+      ) : note && noteId ? (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="flex items-center gap-1 px-6 pt-5">
+            <TitleInput key={note.id + note.title} id={note.id} title={note.title} />
+            <ToolbarButton
+              label={note.pinned ? "Unpin note" : "Pin note"}
+              pressed={note.pinned}
+              onClick={() => void setPinned(note.id, !note.pinned)}
+            >
+              <Star aria-hidden className={cn("size-4", note.pinned && "fill-current")} />
+            </ToolbarButton>
+            <ToolbarButton
+              label={note.archived ? "Unarchive note" : "Archive note"}
+              onClick={() => void setArchived(note.id, !note.archived)}
+            >
+              {note.archived ? (
+                <ArchiveRestore aria-hidden className="size-4" />
+              ) : (
+                <Archive aria-hidden className="size-4" />
+              )}
+            </ToolbarButton>
+            <ToolbarButton label="Duplicate note" onClick={() => void duplicateNote(note.id)}>
+              <Copy aria-hidden className="size-4" />
+            </ToolbarButton>
+            <ToolbarButton label="Delete note" onClick={() => void deleteNote(note.id)}>
+              <Trash2 aria-hidden className="size-4" />
+            </ToolbarButton>
+          </div>
+          <div className="flex items-center justify-between px-7 pt-1 pb-2 text-xs text-fg-muted">
+            <span>{note.path}</span>
+            <span role="status" aria-live="polite">
+              {STATUS_LABEL[status]}
+            </span>
+          </div>
+
+          {status === "conflict" && (
+            <div role="alert" className="mx-6 mb-2 rounded-md border border-ring px-3 py-2 text-sm">
+              <p>
+                This note was changed outside NoteNest. Autosave is paused so nothing is
+                overwritten.
+              </p>
+              <div className="mt-2 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => void keepMine()}
+                  className="rounded-md bg-accent px-2.5 py-1 text-xs text-accent-fg"
+                >
+                  Keep my version
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void loadTheirs()}
+                  className="rounded-md border border-border px-2.5 py-1 text-xs hover:bg-surface-hover"
+                >
+                  Load the version on disk
+                </button>
+              </div>
+              <p className="mt-1 text-xs text-fg-muted">
+                Either way, the other version is kept so you can get it back.
+              </p>
+            </div>
+          )}
+          {status === "error" && (
+            <div role="alert" className="mx-6 mb-2 rounded-md border border-ring px-3 py-2 text-sm">
+              <p>Could not save: {message}</p>
+              <p className="mt-1 text-xs text-fg-muted">
+                Your text is still here and a recovery copy was kept.
+              </p>
+              <button
+                type="button"
+                onClick={() => void flush()}
+                className="mt-2 rounded-md border border-border px-2.5 py-1 text-xs hover:bg-surface-hover"
+              >
+                Try again
+              </button>
+            </div>
+          )}
+
+          <textarea
+            aria-label="Note content"
+            value={content}
+            disabled={loading}
+            onChange={(e) => edit(e.target.value)}
+            spellCheck
+            className="min-h-0 flex-1 resize-none bg-transparent px-7 pb-6 font-mono text-sm leading-relaxed focus-visible:outline-none"
+          />
+        </div>
+      ) : (
+        <div className="p-8">
+          <p className="text-sm text-fg-muted">
+            {loading ? "Opening…" : `Select a note, or press ${mod}+N to create one.`}
+          </p>
+        </div>
+      )}
     </main>
   );
 }

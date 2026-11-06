@@ -2,7 +2,10 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { THEMES, type Theme } from "../lib/theme";
 import { modLabel } from "../lib/shortcuts";
+import { isTauri } from "../lib/api";
+import { changeTheme } from "../lib/actions";
 import { useUi } from "../store/ui";
+import { useVault } from "../store/vault";
 
 const THEME_LABELS: Record<Theme, string> = {
   light: "Light",
@@ -14,7 +17,8 @@ export function SettingsDialog() {
   const open = useUi((s) => s.settingsOpen);
   const setOpen = useUi((s) => s.setSettingsOpen);
   const theme = useUi((s) => s.theme);
-  const setTheme = useUi((s) => s.setTheme);
+  const vaultPath = useVault((s) => s.path);
+  const changeVault = useVault((s) => s.change);
   const mod = modLabel();
 
   const shortcuts: [string, string][] = [
@@ -35,7 +39,7 @@ export function SettingsDialog() {
             </Dialog.Close>
           </div>
           <Dialog.Description className="mt-1 text-sm text-fg-muted">
-            Preferences are stored on this device only.
+            Your notes and preferences stay on this device.
           </Dialog.Description>
 
           <fieldset className="mt-4">
@@ -48,7 +52,7 @@ export function SettingsDialog() {
                     name="theme"
                     value={t}
                     checked={theme === t}
-                    onChange={() => setTheme(t)}
+                    onChange={() => changeTheme(t)}
                     className="accent-accent"
                   />
                   {THEME_LABELS[t]}
@@ -56,6 +60,23 @@ export function SettingsDialog() {
               ))}
             </div>
           </fieldset>
+
+          {isTauri() && (
+            <section className="mt-5" aria-label="Vault">
+              <h3 className="mb-1 text-sm font-medium">Vault</h3>
+              <p className="text-sm break-all text-fg-muted">{vaultPath}</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  void changeVault();
+                }}
+                className="mt-2 rounded-md border border-border px-2.5 py-1 text-xs hover:bg-surface-hover"
+              >
+                Change vault…
+              </button>
+            </section>
+          )}
 
           <section className="mt-5" aria-label="Keyboard shortcuts">
             <h3 className="mb-2 text-sm font-medium">Keyboard shortcuts</h3>

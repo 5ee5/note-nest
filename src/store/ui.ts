@@ -2,6 +2,21 @@ import { create } from "zustand";
 import { applyTheme, loadTheme, saveTheme, type Theme } from "../lib/theme";
 import type { SortKey, View } from "../lib/notes";
 
+export interface Notice {
+  id: number;
+  kind: "error" | "warning" | "info";
+  message: string;
+}
+
+export interface PromptRequest {
+  title: string;
+  label: string;
+  initial?: string;
+  confirmLabel?: string;
+  /** Resolve by returning; throw to keep the dialog open and show the message. */
+  onSubmit: (value: string) => Promise<void> | void;
+}
+
 interface UiState {
   theme: Theme;
   view: View;
@@ -12,6 +27,8 @@ interface UiState {
   explorerCollapsed: boolean;
   paletteOpen: boolean;
   settingsOpen: boolean;
+  notices: Notice[];
+  prompt: PromptRequest | null;
   /** Incremented to ask the explorer to focus its search box. */
   searchFocusTick: number;
 
@@ -25,7 +42,13 @@ interface UiState {
   setPaletteOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
   focusSearch: () => void;
+  notify: (kind: Notice["kind"], message: string) => void;
+  dismissNotice: (id: number) => void;
+  openPrompt: (prompt: PromptRequest) => void;
+  closePrompt: () => void;
 }
+
+let noticeCounter = 0;
 
 export const useUi = create<UiState>((set) => ({
   theme: loadTheme(),
@@ -37,6 +60,8 @@ export const useUi = create<UiState>((set) => ({
   explorerCollapsed: false,
   paletteOpen: false,
   settingsOpen: false,
+  notices: [],
+  prompt: null,
   searchFocusTick: 0,
 
   setTheme: (theme) => {
@@ -54,4 +79,9 @@ export const useUi = create<UiState>((set) => ({
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   focusSearch: () =>
     set((s) => ({ explorerCollapsed: false, searchFocusTick: s.searchFocusTick + 1 })),
+  notify: (kind, message) =>
+    set((s) => ({ notices: [...s.notices, { id: ++noticeCounter, kind, message }] })),
+  dismissNotice: (id) => set((s) => ({ notices: s.notices.filter((n) => n.id !== id) })),
+  openPrompt: (prompt) => set({ prompt }),
+  closePrompt: () => set({ prompt: null }),
 }));

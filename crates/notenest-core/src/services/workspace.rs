@@ -572,6 +572,19 @@ mod tests {
     use super::*;
     use std::fs;
 
+    /// `Database::close` can return before SQLite has finished closing the files; the
+    /// WAL files disappear once the last connection is really closed. Tests that edit
+    /// the index file afterwards must wait for that, or the late close can rewrite it.
+    fn wait_for_close(dir: &tempfile::TempDir) {
+        let meta = dir.path().join(".notenest");
+        for _ in 0..300 {
+            if !meta.join("index.db-wal").exists() && !meta.join("index.db-shm").exists() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
     async fn open() -> (tempfile::TempDir, Workspace) {
         let dir = tempfile::tempdir().unwrap();
         let (ws, _) = Workspace::open(dir.path(), false).await.unwrap();
@@ -835,6 +848,7 @@ mod tests {
 
         // Delete the index entirely, then recover everything from the files.
         ws.database().close().await;
+        wait_for_close(&dir);
         fs::remove_file(dir.path().join(".notenest/index.db")).unwrap();
         let (ws2, _) = Workspace::open(dir.path(), false).await.unwrap();
         let again = ws2.list_notes().await.unwrap().remove(0);
@@ -944,6 +958,7 @@ mod tests {
             ws.create_note(None, Some("Safe")).await.unwrap();
             ws.database().close().await;
         }
+        wait_for_close(&dir);
         // Model a damaged main file with no WAL to recover from (a WAL left over from
         // a clean shutdown can legitimately let SQLite reconstruct the pages).
         for ext in ["db-wal", "db-shm"] {

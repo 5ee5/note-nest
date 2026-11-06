@@ -59,7 +59,17 @@ impl Database {
     /// # Errors
     /// Only if even a fresh database cannot be created, or the bad file cannot be moved.
     pub async fn open_recovering(path: &Path) -> Result<Opened> {
-        match Self::open(path).await {
+        // SQLite may silently re-initialize a very small non-database file, so check
+        // the header ourselves first: anything that is not SQLite is kept as a backup.
+        let attempt = if has_sqlite_header(path) {
+            Self::open(path).await
+        } else {
+            Err(Error::Corrupt {
+                context: "index database".into(),
+                message: "file is not a SQLite database".into(),
+            })
+        };
+        match attempt {
             Ok(database) => Ok(Opened {
                 database,
                 rebuilt: false,
@@ -108,6 +118,20 @@ impl Database {
 
     pub(crate) fn pool(&self) -> &SqlitePool {
         &self.pool
+    }
+}
+
+/// True if the file is missing, empty, or starts with the SQLite magic string.
+fn has_sqlite_header(path: &Path) -> bool {
+    use std::io::Read;
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return true; // nothing there yet: a fresh database will be created
+    };
+    let mut head = [0u8; 16];
+    match file.read(&mut head) {
+        Ok(0) => true,
+        Ok(n) => n == 16 && &head == b"SQLite format 3\0",
+        Err(_) => false,
     }
 }
 
@@ -193,6 +217,21 @@ mod tests {
         assert!(std::fs::read(backup)
             .unwrap()
             .starts_with(b"this is definitely"));
+    }
+
+    #[tokio::test]
+    async fn tiny_garbage_files_are_backed_up_not_silently_reinitialized() {
+        // SQLite itself sometimes accepts such a file as an empty database, so repeat to
+        // make sure our own header check, not luck, is what rejects it. Each round uses
+        // its own directory so a connection still closing cannot touch the next file.
+        for _ in 0..20 {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("index.db");
+            std::fs::write(&path, b"short").unwrap();
+            let opened = Database::open_recovering(&path).await.unwrap();
+            assert!(opened.rebuilt);
+            assert_eq!(std::fs::read(opened.backup.unwrap()).unwrap(), b"short");
+        }
     }
 
     #[tokio::test]
