@@ -5,6 +5,7 @@ import { languages } from "@codemirror/language-data";
 import { search, searchKeymap } from "@codemirror/search";
 import { EditorState, type Extension } from "@codemirror/state";
 import { drawSelection, EditorView, highlightSpecialChars, keymap } from "@codemirror/view";
+import { formatKeymap } from "./format";
 import { frontmatterFolding, frontmatterIdGuard } from "./frontmatter";
 import { detectLineBreak } from "./text";
 import { editorHighlighting, editorTheme } from "./theme";
@@ -43,6 +44,7 @@ export function createEditorState(doc: string, options: EditorOptions): EditorSt
       frontmatterFolding,
       frontmatterIdGuard,
       search({ top: true }),
+      keymap.of(formatKeymap),
       keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, ...foldKeymap]),
       editorTheme,
       editorHighlighting,

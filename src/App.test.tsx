@@ -23,6 +23,8 @@ vi.mock("./components/MarkdownEditor", async () => {
   };
 });
 
+vi.mock("./components/FormatToolbar", () => ({ default: () => null }));
+
 beforeAll(() => {
   // happy-dom has no ResizeObserver; react-resizable-panels needs one.
   globalThis.ResizeObserver ??= class {

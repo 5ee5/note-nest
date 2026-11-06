@@ -69,7 +69,8 @@ function sniffImage(b: Uint8Array): string | null {
 }
 
 function previewOf(content: string): string {
-  return content.replace(/\s+/g, " ").trim().slice(0, 120);
+  const body = content.replace(/^---\n[\s\S]*?\n---\n/, "");
+  return body.replace(/\s+/g, " ").trim().slice(0, 120);
 }
 
 /** In-memory stand-in for the real backend. Nothing is written to disk. */
@@ -143,10 +144,14 @@ export class MockNotesApi implements NotesApi {
       tags: ["personal/journal"],
       updatedAt: iso(0),
     });
-    this.add("Welcome.md", "This is sample data. Nothing you type here is saved to disk.", {
-      pinned: true,
-      updatedAt: iso(20),
-    });
+    this.add(
+      "Welcome.md",
+      "---\nid: 6e6f7465-6e65-4737-8000-000000000001\ntags: [sample]\n---\n\nThis is sample data. Nothing you type here is saved to disk.\n",
+      {
+        pinned: true,
+        updatedAt: iso(20),
+      },
+    );
   }
 
   private get(id: string): Stored {

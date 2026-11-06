@@ -18,6 +18,7 @@ import { useUi } from "../store/ui";
 
 // The editor (CodeMirror and its language packs) is loaded on first use.
 const MarkdownEditor = lazy(() => import("./MarkdownEditor"));
+const FormatToolbar = lazy(() => import("./FormatToolbar"));
 
 const STATUS_LABEL: Record<SaveStatus, string> = {
   idle: "",
@@ -203,6 +204,9 @@ export function EditorPane() {
             </div>
           )}
 
+          <Suspense fallback={<div className="h-9 border-b border-border" />}>
+            <FormatToolbar />
+          </Suspense>
           <div className="min-h-0 flex-1">
             <Suspense fallback={<p className="px-7 text-sm text-fg-muted">Loading editor…</p>}>
               <MarkdownEditor

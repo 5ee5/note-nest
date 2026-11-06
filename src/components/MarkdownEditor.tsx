@@ -1,8 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import { EditorView } from "@codemirror/view";
+import { undoDepth, redoDepth } from "@codemirror/commands";
+import type { EditorState } from "@codemirror/state";
+import { useEditorView } from "../store/editorView";
+import { activeFormats } from "./editor/format";
 import { foldFrontmatter, findFrontmatter } from "./editor/frontmatter";
 import { createEditorState } from "./editor/state";
 import { docText, External, syncDocument } from "./editor/text";
+
+function publishState(state: EditorState): void {
+  useEditorView.getState().publish({
+    formats: activeFormats(state),
+    canUndo: undoDepth(state) > 0,
+    canRedo: redoDepth(state) > 0,
+  });
+}
 
 interface Props {
   /** The note's full file text (the editor is the source while typing). */
@@ -36,6 +48,7 @@ export default function MarkdownEditor({ value, onChange, onSave, onView }: Prop
       onSave: () => callbacks.current.onSave(),
       extensions: [
         EditorView.updateListener.of((u) => {
+          if (u.docChanged || u.selectionSet) publishState(u.state);
           if (!u.docChanged || u.transactions.some((tr) => tr.annotation(External))) return;
           const text = docText(u.state);
           lastEmitted.current = text;
@@ -50,7 +63,10 @@ export default function MarkdownEditor({ value, onChange, onSave, onView }: Prop
     const fm = findFrontmatter(view.state.doc);
     if (initial.trim() === "" || (fm && fm.after >= view.state.doc.length)) view.focus();
     callbacks.current.onView?.(view);
+    useEditorView.getState().setView(view);
+    publishState(view.state);
     return () => {
+      useEditorView.getState().setView(null);
       callbacks.current.onView?.(null);
       view.destroy();
       viewRef.current = null;
