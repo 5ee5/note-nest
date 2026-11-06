@@ -3,6 +3,7 @@ import { localDateString } from "./api/mock";
 import type { Theme } from "./theme";
 import type { EditorMode } from "../store/ui";
 import type { Draft } from "./api";
+import { altText, isImageFile, MAX_ATTACHMENT_BYTES } from "./images";
 import { useEditor } from "../store/editor";
 import { useRecovery } from "../store/recovery";
 import { useNotes } from "../store/notes";
@@ -227,4 +228,35 @@ export async function discardDraft(draft: Draft): Promise<void> {
 export function changeEditorMode(mode: EditorMode): void {
   ui().setEditorMode(mode);
   void attempt("Could not save the view mode", () => api().setSetting("editorMode", mode));
+}
+
+/**
+ * Stores image files as attachments of the open note and returns the Markdown that
+ * references them (`![alt](path)`, one per file, blank-line separated), or null if none
+ * could be stored. Problems are reported as notices, per file, so one bad file does not
+ * lose the others.
+ */
+export async function storeImageFiles(files: File[]): Promise<string | null> {
+  const noteId = useEditor.getState().noteId;
+  if (!noteId) {
+    ui().notify("error", "Open a note before adding images.");
+    return null;
+  }
+  const refs: string[] = [];
+  for (const file of files) {
+    const label = file.name || "the image";
+    if (!isImageFile(file)) {
+      ui().notify("error", `${label} is not an image, so it was not added.`);
+      continue;
+    }
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      ui().notify("error", `${label} is larger than 25 MB, so it was not added.`);
+      continue;
+    }
+    const attachment = await attempt(`Could not attach ${label}`, async () =>
+      api().addAttachment(noteId, new Uint8Array(await file.arrayBuffer()), file.name || null),
+    );
+    if (attachment) refs.push(`![${altText(file.name)}](${attachment.markdownPath})`);
+  }
+  return refs.length > 0 ? refs.join("\n\n") : null;
 }

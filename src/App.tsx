@@ -9,11 +9,13 @@ import { RecoveryDialog } from "./components/RecoveryDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { VaultGate } from "./components/VaultGate";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
+import { usePreventFileNavigation } from "./hooks/usePreventFileNavigation";
 import { useThemeSync } from "./hooks/useThemeSync";
 
 export default function App() {
   useThemeSync();
   useGlobalShortcuts();
+  usePreventFileNavigation();
 
   useEffect(() => {
     if (isTauri()) {

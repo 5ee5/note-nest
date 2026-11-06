@@ -46,12 +46,13 @@ import {
 import { modLabel } from "../lib/shortcuts";
 import { cn } from "../lib/cn";
 import { useEditorView } from "../store/editorView";
+import { insertImages } from "./editor/images";
 
 interface Item {
   id: string;
   label: string;
   icon: LucideIcon;
-  run: (view: EditorView) => void;
+  run: (view: EditorView, ctx: { openImagePicker: () => void }) => void;
   pressed?: (f: ActiveFormats) => boolean;
   disabled?: (s: { canUndo: boolean; canRedo: boolean }) => boolean;
 }
@@ -62,7 +63,7 @@ const cmd =
     runCommand(view, c);
   };
 
-function buildItems(mod: string, onInsertImage?: () => void): Item[][] {
+function buildItems(mod: string): Item[][] {
   return [
     [
       {
@@ -165,9 +166,12 @@ function buildItems(mod: string, onInsertImage?: () => void): Item[][] {
     ],
     [
       { id: "link", label: "Link", icon: Link, run: cmd(insertLink) },
-      ...(onInsertImage
-        ? [{ id: "image", label: "Insert image", icon: ImagePlus, run: () => onInsertImage() }]
-        : []),
+      {
+        id: "image",
+        label: "Insert image",
+        icon: ImagePlus,
+        run: (_view, ctx) => ctx.openImagePicker(),
+      },
       { id: "table", label: "Table", icon: Table, run: cmd(insertTable) },
       { id: "codeblock", label: "Code block", icon: SquareCode, run: cmd(insertCodeBlock) },
       { id: "rule", label: "Horizontal rule", icon: Minus, run: cmd(insertHorizontalRule) },
@@ -186,18 +190,14 @@ function buildItems(mod: string, onInsertImage?: () => void): Item[][] {
  * End move between buttons (WAI-ARIA toolbar pattern). Buttons never take focus from
  * the editor on mouse down, so the selection they act on stays put.
  */
-export default function FormatToolbar({
-  disabled = false,
-  onInsertImage,
-}: {
-  disabled?: boolean;
-  onInsertImage?: () => void;
-}) {
+export default function FormatToolbar({ disabled = false }: { disabled?: boolean }) {
   const view = useEditorView((s) => s.view);
   const formats = useEditorView((s) => s.formats);
   const canUndo = useEditorView((s) => s.canUndo);
   const canRedo = useEditorView((s) => s.canRedo);
-  const groups = buildItems(modLabel(), onInsertImage);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const openImagePicker = () => fileInput.current?.click();
+  const groups = buildItems(modLabel());
   const flat = groups.flat();
   const [active, setActive] = useState(0);
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
@@ -236,6 +236,19 @@ export default function FormatToolbar({
       aria-orientation="horizontal"
       className="flex flex-wrap items-center gap-0.5 border-b border-border px-6 py-1"
     >
+      <input
+        ref={fileInput}
+        type="file"
+        accept="image/*"
+        multiple
+        hidden
+        aria-label="Choose images to insert"
+        onChange={(e) => {
+          const files = Array.from(e.target.files ?? []);
+          e.target.value = ""; // allow choosing the same file again
+          if (view && files.length > 0) void insertImages(view, files);
+        }}
+      />
       {groups.map((group, gi) => (
         <div key={gi} className="flex items-center gap-0.5">
           {gi > 0 && <span aria-hidden className="mx-1 h-4 w-px bg-border" />}
@@ -260,7 +273,7 @@ export default function FormatToolbar({
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => {
                   if (!view) return;
-                  item.run(view);
+                  item.run(view, { openImagePicker });
                   view.focus();
                 }}
                 className={cn(
