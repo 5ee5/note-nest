@@ -25,6 +25,7 @@ import { cn } from "../lib/cn";
 import { useEditor, type SaveStatus } from "../store/editor";
 import { useNotes } from "../store/notes";
 import { useUi, type EditorMode } from "../store/ui";
+import { EditorStatusBar } from "./EditorStatusBar";
 import { MarkdownPreview } from "./MarkdownPreview";
 
 // The editor (CodeMirror and its language packs) is loaded on first use.
@@ -260,6 +261,7 @@ export function EditorPane() {
               </div>
             )}
           </div>
+          <EditorStatusBar content={content} />
         </div>
       ) : (
         <div className="p-8">

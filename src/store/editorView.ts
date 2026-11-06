@@ -1,6 +1,7 @@
 import type { EditorView } from "@codemirror/view";
 import { create } from "zustand";
 import type { ActiveFormats } from "../components/editor/format";
+import type { TextStats } from "../lib/stats";
 
 const NO_FORMATS: ActiveFormats = {
   bold: false,
@@ -17,9 +18,16 @@ interface EditorViewState {
   formats: ActiveFormats;
   canUndo: boolean;
   canRedo: boolean;
+  /** Counts for the current selection, or null when nothing is selected. */
+  selection: TextStats | null;
   setView: (view: EditorView | null) => void;
   /** Publishes selection-dependent state for the toolbar (only when it changed). */
-  publish: (next: { formats: ActiveFormats; canUndo: boolean; canRedo: boolean }) => void;
+  publish: (next: {
+    formats: ActiveFormats;
+    canUndo: boolean;
+    canRedo: boolean;
+    selection: TextStats | null;
+  }) => void;
 }
 
 const sameFormats = (a: ActiveFormats, b: ActiveFormats) =>
@@ -36,11 +44,25 @@ export const useEditorView = create<EditorViewState>((set, get) => ({
   formats: NO_FORMATS,
   canUndo: false,
   canRedo: false,
+  selection: null,
   setView: (view) =>
-    set(view ? { view } : { view: null, formats: NO_FORMATS, canUndo: false, canRedo: false }),
-  publish: ({ formats, canUndo, canRedo }) => {
+    set(
+      view
+        ? { view }
+        : { view: null, formats: NO_FORMATS, canUndo: false, canRedo: false, selection: null },
+    ),
+  publish: ({ formats, canUndo, canRedo, selection }) => {
     const s = get();
-    if (sameFormats(s.formats, formats) && s.canUndo === canUndo && s.canRedo === canRedo) return;
-    set({ formats, canUndo, canRedo });
+    const sameSelection =
+      s.selection?.words === selection?.words && s.selection?.characters === selection?.characters;
+    if (
+      sameFormats(s.formats, formats) &&
+      s.canUndo === canUndo &&
+      s.canRedo === canRedo &&
+      sameSelection
+    ) {
+      return;
+    }
+    set({ formats, canUndo, canRedo, selection });
   },
 }));

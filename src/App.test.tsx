@@ -185,6 +185,19 @@ describe("folders", () => {
   });
 });
 
+describe("statistics", () => {
+  it("shows word and character counts that follow the text", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByText("Linux"));
+    const bar = await screen.findByLabelText("Document statistics");
+    await waitFor(() => expect(bar.textContent).toContain("5 words"));
+    expect(bar.textContent).toContain("33 characters");
+    await user.type(await screen.findByLabelText("Note content"), " and more");
+    await waitFor(() => expect(bar.textContent).toContain("7 words"));
+  });
+});
+
 describe("view modes", () => {
   it("switches between edit, split and preview and remembers the choice", async () => {
     const user = userEvent.setup();

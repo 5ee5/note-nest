@@ -2,14 +2,28 @@ import { useEffect, useRef, useState } from "react";
 import { EditorView } from "@codemirror/view";
 import { undoDepth, redoDepth } from "@codemirror/commands";
 import type { EditorState } from "@codemirror/state";
+import { textStats } from "../lib/stats";
 import { useEditorView } from "../store/editorView";
+import { useUi } from "../store/ui";
 import { activeFormats } from "./editor/format";
 import { foldFrontmatter, findFrontmatter } from "./editor/frontmatter";
 import { createEditorState } from "./editor/state";
 import { docText, External, syncDocument } from "./editor/text";
 
+/** Selections beyond this size are not counted (it would cost more than it helps). */
+const MAX_COUNTED_SELECTION = 500_000;
+
+function selectionStats(state: EditorState) {
+  const ranges = state.selection.ranges.filter((r) => !r.empty);
+  if (ranges.length === 0) return null;
+  const size = ranges.reduce((n, r) => n + (r.to - r.from), 0);
+  if (size > MAX_COUNTED_SELECTION) return { words: 0, characters: size };
+  return textStats(ranges.map((r) => state.sliceDoc(r.from, r.to)).join("\n"));
+}
+
 function publishState(state: EditorState): void {
   useEditorView.getState().publish({
+    selection: selectionStats(state),
     formats: activeFormats(state),
     canUndo: undoDepth(state) > 0,
     canRedo: redoDepth(state) > 0,
@@ -46,6 +60,13 @@ export default function MarkdownEditor({ value, onChange, onSave, onView }: Prop
   useEffect(() => {
     const state = createEditorState(initial, {
       onSave: () => callbacks.current.onSave(),
+      onPlainMode: () =>
+        useUi
+          .getState()
+          .notify(
+            "info",
+            "This note is very large or has a huge unbroken block, so Markdown highlighting is off to keep typing fast.",
+          ),
       extensions: [
         EditorView.updateListener.of((u) => {
           if (u.docChanged || u.selectionSet) publishState(u.state);
