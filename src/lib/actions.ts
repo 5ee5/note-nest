@@ -2,8 +2,9 @@ import { toApiError } from "./api";
 import { localDateString } from "./api/mock";
 import type { Theme } from "./theme";
 import type { EditorMode } from "../store/ui";
-import type { Draft } from "./api";
+import type { Draft, NoteSummary } from "./api";
 import { altText, isImageFile, MAX_ATTACHMENT_BYTES } from "./images";
+import { normalizeTag } from "./tags";
 import { useEditor } from "../store/editor";
 import { useRecovery } from "../store/recovery";
 import { useNotes } from "../store/notes";
@@ -259,4 +260,50 @@ export async function storeImageFiles(files: File[]): Promise<string | null> {
     if (attachment) refs.push(`![${altText(file.name)}](${attachment.markdownPath})`);
   }
   return refs.length > 0 ? refs.join("\n\n") : null;
+}
+
+// ------------------------------------------------------------------ tags
+
+/** Replaces the note's frontmatter tags, keeping the editor consistent. */
+async function setNoteTags(id: string, tags: string[]): Promise<boolean> {
+  let ok = false;
+  await attempt("Could not change the tags", () =>
+    withEditorSettled(async () => {
+      await api().setTags(id, tags);
+      ok = true;
+      await reloadOpenNote(id);
+    }),
+  );
+  return ok;
+}
+
+/** The tags stored in the note's frontmatter (inline #tags are not editable from the UI). */
+function editableTags(note: NoteSummary): string[] {
+  return note.tags.filter((t) => !note.inlineTags.includes(t));
+}
+
+export async function addTag(note: NoteSummary, raw: string): Promise<boolean> {
+  const tag = normalizeTag(raw);
+  if (!tag) {
+    ui().notify(
+      "error",
+      `"${raw.trim()}" is not a valid tag. Use letters, numbers, - _ and / (for nesting), with at least one letter.`,
+    );
+    return false;
+  }
+  if (note.tags.includes(tag)) return true;
+  return setNoteTags(note.id, [...editableTags(note), tag]);
+}
+
+export async function removeTag(note: NoteSummary, tag: string): Promise<boolean> {
+  return setNoteTags(
+    note.id,
+    editableTags(note).filter((t) => t !== tag),
+  );
+}
+
+/** Puts text in the explorer's search box and focuses it. */
+export function searchFor(query: string): void {
+  ui().setQuery(query);
+  ui().focusSearch();
 }

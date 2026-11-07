@@ -35,6 +35,21 @@ const NOTES = [
 ];
 
 describe("selectNotes", () => {
+  it("caps recently opened at the latest 20 notes", () => {
+    const many = Array.from({ length: 30 }, (_, i) =>
+      note(`r${i}`, { lastOpenedAt: `2026-03-${String(i + 1).padStart(2, "0")}T00:00:00.000Z` }),
+    );
+    const recent = selectNotes(many, { kind: "recent" }, "title", "");
+    expect(recent).toHaveLength(20);
+    expect(recent[0]!.id).toBe("r29");
+    expect(selectNotes(many, { kind: "all" }, "title", "")).toHaveLength(30);
+  });
+
+  it("lists nothing for views that show something other than notes", () => {
+    expect(selectNotes(NOTES, { kind: "orphans" }, "title", "")).toEqual([]);
+    expect(selectNotes(NOTES, { kind: "broken" }, "title", "")).toEqual([]);
+  });
+
   it("sorts by last modified, newest first, without mutating input", () => {
     const copy = [...NOTES];
     const ids = selectNotes(NOTES, { kind: "all" }, "updated", "").map((n) => n.id);

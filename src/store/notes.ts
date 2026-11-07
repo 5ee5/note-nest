@@ -4,6 +4,7 @@ import {
   toApiError,
   type NoteSummary,
   type NotesApi,
+  type TagCount,
   type TrashItem,
 } from "../lib/api";
 
@@ -12,6 +13,8 @@ interface NotesState {
   notes: NoteSummary[];
   folders: string[];
   trash: TrashItem[];
+  /** Every tag with its note count (nested tags roll up into their parents). */
+  tagCounts: TagCount[];
   status: "idle" | "loading" | "ready" | "error";
   error: string | null;
 
@@ -27,6 +30,7 @@ export function createNotesStore(api: NotesApi) {
     notes: [],
     folders: [],
     trash: [],
+    tagCounts: [],
     status: "idle",
     error: null,
 
@@ -34,12 +38,13 @@ export function createNotesStore(api: NotesApi) {
       set({ status: "loading" });
       try {
         const current = get().api;
-        const [notes, folders, trash] = await Promise.all([
+        const [notes, folders, trash, tagCounts] = await Promise.all([
           current.listNotes(),
           current.listFolders(),
           current.listTrash(),
+          current.listTags(),
         ]);
-        set({ notes, folders, trash, status: "ready", error: null });
+        set({ notes, folders, trash, tagCounts, status: "ready", error: null });
       } catch (e) {
         set({ status: "error", error: toApiError(e).message });
       }

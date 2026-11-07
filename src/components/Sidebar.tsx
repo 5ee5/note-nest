@@ -4,55 +4,19 @@ import {
   Clock,
   Folder,
   FolderPlus,
-  Hash,
   Library,
+  Link2Off,
   Pencil,
   Settings,
   Star,
   Trash2,
-  type LucideIcon,
+  Unlink,
 } from "lucide-react";
-import { allTags, type View } from "../lib/notes";
 import { createFolder, deleteFolder, renameFolder } from "../lib/actions";
-import { cn } from "../lib/cn";
 import { useNotes } from "../store/notes";
+import { NavButton } from "./NavButton";
+import { TagTree } from "./TagTree";
 import { useUi } from "../store/ui";
-
-function sameView(a: View, b: View): boolean {
-  if (a.kind !== b.kind) return false;
-  return "value" in a && "value" in b ? a.value === b.value : true;
-}
-
-function NavButton({
-  icon: Icon,
-  label,
-  view,
-  depth = 0,
-}: {
-  icon: LucideIcon;
-  label: string;
-  view: View;
-  depth?: number;
-}) {
-  const current = useUi((s) => s.view);
-  const setView = useUi((s) => s.setView);
-  const active = sameView(current, view);
-  return (
-    <button
-      type="button"
-      aria-current={active ? "page" : undefined}
-      onClick={() => setView(view)}
-      style={{ paddingLeft: `${0.5 + depth * 0.9}rem` }}
-      className={cn(
-        "flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pr-2 text-left text-sm",
-        active ? "bg-surface-active font-medium" : "text-fg-muted hover:bg-surface-hover",
-      )}
-    >
-      <Icon aria-hidden className="size-4 shrink-0" />
-      <span className="truncate">{label}</span>
-    </button>
-  );
-}
 
 function SectionHeader({ title, children }: { title: string; children?: React.ReactNode }) {
   return (
@@ -129,12 +93,11 @@ function FolderRow({ path }: { path: string }) {
 }
 
 export function Sidebar() {
-  const notes = useNotes((s) => s.notes);
+  const hasTags = useNotes((s) => s.tagCounts.length > 0);
   const folders = useNotes((s) => s.folders);
   const trashCount = useNotes((s) => s.trash.length);
   const setSettingsOpen = useUi((s) => s.setSettingsOpen);
   const openPrompt = useUi((s) => s.openPrompt);
-  const tags = allTags(notes);
   const row = (child: React.ReactNode) => <div className="flex items-center">{child}</div>;
 
   return (
@@ -146,14 +109,10 @@ export function Sidebar() {
         {row(<NavButton icon={Clock} label="Recently opened" view={{ kind: "recent" }} />)}
         {row(<NavButton icon={Calendar} label="Daily notes" view={{ kind: "daily" }} />)}
 
-        {tags.length > 0 && (
+        {hasTags && (
           <>
             <SectionHeader title="Tags" />
-            {tags.map((tag) => (
-              <div key={tag} className="flex items-center">
-                <NavButton icon={Hash} label={tag} view={{ kind: "tag", value: tag }} />
-              </div>
-            ))}
+            <TagTree />
           </>
         )}
 
@@ -178,6 +137,8 @@ export function Sidebar() {
         ))}
 
         <div className="mt-4 border-t border-border pt-2">
+          {row(<NavButton icon={Unlink} label="Orphaned notes" view={{ kind: "orphans" }} />)}
+          {row(<NavButton icon={Link2Off} label="Broken links" view={{ kind: "broken" }} />)}
           {row(<NavButton icon={Archive} label="Archive" view={{ kind: "archived" }} />)}
           {row(
             <NavButton

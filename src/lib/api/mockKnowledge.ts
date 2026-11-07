@@ -4,6 +4,7 @@
  * resolution precedence, query syntax) so the UI behaves alike in a browser and in tests.
  * It is deliberately simple; the real implementation is tested in Rust.
  */
+import { normalizeTag } from "../tags";
 import type {
   AffectedNote,
   Backlink,
@@ -42,13 +43,6 @@ export function bodyOf(content: string): string {
 function maskCode(text: string): string {
   const blank = (s: string) => s.replace(/[^\n]/g, " ");
   return text.replace(/```[\s\S]*?```/g, blank).replace(/`[^`\n]*`/g, blank);
-}
-
-export function normalizeTag(raw: string): string | null {
-  const t = raw.trim().replace(/^#+/, "").replace(/\s+/g, "-").toLowerCase();
-  if (!/^[\p{L}\p{N}_/-]+$/u.test(t)) return null;
-  const out = t.replace(/\/{2,}/g, "/").replace(/^[/-]+|[/-]+$/g, "");
-  return out !== "" && /\p{L}/u.test(out) && out.length <= 100 ? out : null;
 }
 
 function frontmatterList(content: string, key: string): string[] {

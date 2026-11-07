@@ -26,6 +26,7 @@ import { useEditor, type SaveStatus } from "../store/editor";
 import { useNotes } from "../store/notes";
 import { useUi, type EditorMode } from "../store/ui";
 import { EditorStatusBar } from "./EditorStatusBar";
+import { TagBar } from "./TagBar";
 import { MarkdownPreview } from "./MarkdownPreview";
 
 // The editor (CodeMirror and its language packs) is loaded on first use.
@@ -191,6 +192,8 @@ export function EditorPane() {
               {STATUS_LABEL[status]}
             </span>
           </div>
+
+          <TagBar note={note} />
 
           {status === "conflict" && (
             <div role="alert" className="mx-6 mb-2 rounded-md border border-ring px-3 py-2 text-sm">

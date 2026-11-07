@@ -6,7 +6,6 @@ import {
   linkKey,
   MockResolver,
   noteLinks,
-  normalizeTag,
   orphans,
   parseQuery,
   parseTags,
@@ -29,12 +28,6 @@ const note = (path: string, content = "", extra: Partial<KNote> = {}): KNote => 
 });
 
 describe("tags", () => {
-  it("normalizes like the backend", () => {
-    expect(normalizeTag("#Programming/Rust")).toBe("programming/rust");
-    expect(normalizeTag("my tag")).toBe("my-tag");
-    for (const bad of ["", "123", "c++", "-"]) expect(normalizeTag(bad)).toBeNull();
-  });
-
   it("reads frontmatter and inline tags, skipping code and URLs", () => {
     const md =
       "---\ntags: [Rust, a/b]\n---\nText #rust #new and `#code` and https://x.com/#frag #123\n```\n#block\n```\n";

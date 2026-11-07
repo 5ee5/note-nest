@@ -81,13 +81,20 @@ describe("App shell", () => {
     await waitFor(async () => expect(await api.getSetting("theme")).toBe("dark"));
   });
 
-  it("filters the note list with the search box", async () => {
+  it("searches note contents with the search box and highlights the match", async () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByText("Rust");
-    await user.type(screen.getByPlaceholderText("Search notes"), "linux");
-    expect(screen.queryByText("Rust")).toBeNull();
-    expect(screen.getAllByText("Linux").length).toBeGreaterThan(0);
+    await user.type(screen.getByPlaceholderText("Search notes"), "useful");
+    const results = await screen.findByLabelText("Search results");
+    await waitFor(() => expect(within(results).getByText("Linux")).toBeTruthy());
+    expect(within(results).queryByText("Rust")).toBeNull();
+    const marks = [...results.querySelectorAll("mark")].map((m) => m.textContent?.toLowerCase());
+    expect(marks).toContain("useful");
+
+    await user.clear(screen.getByPlaceholderText("Search notes"));
+    await waitFor(() => expect(screen.queryByLabelText("Search results")).toBeNull());
+    expect(screen.getByText("Rust")).toBeTruthy();
   });
 
   it("opens settings and switches theme", async () => {
@@ -182,6 +189,69 @@ describe("folders", () => {
     await user.click(screen.getByRole("button", { name: "Create" }));
     expect(await screen.findByRole("alert")).toBeTruthy();
     expect(screen.getByText(/Could not create the folder/)).toBeTruthy();
+  });
+});
+
+describe("knowledge", () => {
+  it("shows tags as a tree with counts and filters notes by a tag", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText("Rust");
+    const tags = await screen.findByLabelText("Tags", { selector: "ul" });
+    expect(within(tags).getByText("programming")).toBeTruthy();
+    expect(within(tags).queryByText("rust")).toBeNull(); // collapsed
+    await user.click(within(tags).getByRole("button", { name: "Expand programming" }));
+    await user.click(within(tags).getByRole("button", { name: /^rust/ }));
+    const explorer = screen.getByLabelText("Note explorer");
+    expect(within(explorer).getByText("#programming/rust")).toBeTruthy();
+    expect(within(explorer).getByText("Rust")).toBeTruthy();
+    expect(within(explorer).queryByText("Linux")).toBeNull();
+  });
+
+  it("adds, rejects and removes tags on a note", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByText("Linux"));
+    const input = await screen.findByLabelText("Add tag");
+
+    await user.type(input, "Study{Enter}");
+    expect(await screen.findByRole("button", { name: "Remove tag study" })).toBeTruthy();
+    const stored = await api.listNotes();
+    expect(stored.find((n) => n.title === "Linux")?.tags).toContain("study");
+
+    await user.type(screen.getByLabelText("Add tag"), "123{Enter}");
+    expect(await screen.findByText(/"123" is not a valid tag/)).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Remove tag study" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Remove tag study" })).toBeNull(),
+    );
+  });
+
+  it("shows inline #tags read-only", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByText("ideas"));
+    expect(await screen.findByRole("button", { name: "Show notes tagged todo" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Remove tag todo" })).toBeNull();
+  });
+
+  it("lists orphaned notes and broken links", async () => {
+    const user = userEvent.setup();
+    const extra = await api.createNote(null, "Dangling");
+    await api.saveNote(extra.id, "points at [[Missing Note]]", { overwrite: true });
+    render(<App />);
+    await screen.findByText("Rust");
+
+    await user.click(screen.getByRole("button", { name: "Orphaned notes" }));
+    const orphans = await screen.findByLabelText("Orphaned notes", { selector: "ul" });
+    expect(within(orphans).getByText("ideas")).toBeTruthy();
+    expect(within(orphans).queryByText("Rust")).toBeNull(); // linked to other notes
+
+    await user.click(screen.getByRole("button", { name: "Broken links" }));
+    const broken = await screen.findByLabelText("Broken links", { selector: "ul" });
+    expect(within(broken).getByText("Dangling")).toBeTruthy();
+    expect(within(broken).getByText("[[Missing Note]]")).toBeTruthy();
   });
 });
 

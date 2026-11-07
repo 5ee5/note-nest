@@ -153,20 +153,24 @@ export class MockNotesApi implements NotesApi {
   }
 
   private seed(): void {
-    this.add("Inbox/ideas.md", "Things to look into later: a Markdown linter, a tiny CLI…", {
+    this.add("Inbox/ideas.md", "Things to look into later: a Markdown linter, a tiny CLI… #todo", {
       updatedAt: iso(0),
     });
-    this.add("Programming/Rust.md", "# Rust\n\nOwnership, borrowing and lifetimes…", {
-      pinned: true,
-      tags: ["programming/rust"],
-      updatedAt: iso(1),
-      lastOpenedAt: iso(0, 9),
-    });
+    this.add(
+      "Programming/Rust.md",
+      "# Rust\n\nOwnership, borrowing and lifetimes… See also [[Linux]] and [[CodeBuddy]].",
+      {
+        pinned: true,
+        tags: ["programming/rust"],
+        updatedAt: iso(1),
+        lastOpenedAt: iso(0, 9),
+      },
+    );
     this.add("Programming/Linux.md", "Useful commands and config notes.", {
       tags: ["programming/linux"],
       updatedAt: iso(3),
     });
-    this.add("Projects/CodeBuddy.md", "Project goals and open questions.", {
+    this.add("Projects/CodeBuddy.md", "Project goals and open questions. Built with [[Rust]].", {
       tags: ["research/security"],
       updatedAt: iso(5),
       lastOpenedAt: iso(1, 15),

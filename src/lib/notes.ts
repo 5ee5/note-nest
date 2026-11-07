@@ -7,6 +7,8 @@ export type View =
   | { kind: "daily" }
   | { kind: "archived" }
   | { kind: "trash" }
+  | { kind: "orphans" }
+  | { kind: "broken" }
   | { kind: "tag"; value: string }
   | { kind: "folder"; value: string };
 
@@ -32,6 +34,10 @@ export function viewLabel(view: View): string {
       return "Archive";
     case "trash":
       return "Trash";
+    case "orphans":
+      return "Orphaned notes";
+    case "broken":
+      return "Broken links";
     case "tag":
       return `#${view.value}`;
     case "folder":
@@ -47,7 +53,10 @@ function inView(note: NoteSummary, view: View): boolean {
     case "all":
       return true;
     case "trash":
-      return false;
+    case "orphans":
+    case "broken":
+      return false; // these views list something other than notes
+
     case "favorites":
       return note.pinned;
     case "recent":
@@ -92,10 +101,14 @@ export function selectNotes(
   sort: SortKey,
   query: string,
 ): NoteSummary[] {
-  return notes
+  const list = notes
     .filter((n) => inView(n, view) && matchesQuery(n, query))
     .sort((a, b) => compare(a, b, sort, view));
+  return view.kind === "recent" ? list.slice(0, RECENT_LIMIT) : list;
 }
+
+/** "Recently opened" shows only the latest notes. */
+export const RECENT_LIMIT = 20;
 
 export function allTags(notes: readonly NoteSummary[]): string[] {
   return [...new Set(notes.flatMap((n) => n.tags))].sort();

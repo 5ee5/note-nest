@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Command } from "cmdk";
 import {
   changeEditorMode,
@@ -6,6 +7,7 @@ import {
   createNote,
   openDailyNote,
   openNote,
+  searchFor,
 } from "../lib/actions";
 import { THEMES, type Theme } from "../lib/theme";
 import { isDailyNote, type View } from "../lib/notes";
@@ -35,6 +37,8 @@ export function CommandPalette() {
   const setExplorerCollapsed = useUi((s) => s.setExplorerCollapsed);
   const notes = useNotes((s) => s.notes);
   const folders = useNotes((s) => s.folders);
+  const tagCounts = useNotes((s) => s.tagCounts);
+  const [input, setInput] = useState("");
 
   /** Runs a command and closes the palette. */
   const run = (fn: () => void | Promise<void>) => () => {
@@ -46,12 +50,17 @@ export function CommandPalette() {
   return (
     <Command.Dialog
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={(o) => {
+        if (!o) setInput("");
+        setOpen(o);
+      }}
       label="Command palette"
       overlayClassName="fixed inset-0 z-40 bg-overlay"
       contentClassName="fixed top-[20%] left-1/2 z-50 w-[36rem] max-w-[calc(100vw-2rem)] -translate-x-1/2 overflow-hidden rounded-lg border border-border bg-bg shadow-xl"
     >
       <Command.Input
+        value={input}
+        onValueChange={setInput}
         placeholder="Type a command or search notes…"
         className="w-full border-b border-border bg-transparent px-4 py-3 text-sm outline-none placeholder:text-fg-muted"
       />
@@ -59,6 +68,19 @@ export function CommandPalette() {
         <Command.Empty className="px-2 py-4 text-center text-sm text-fg-muted">
           No results.
         </Command.Empty>
+
+        {input.trim().length >= 2 && (
+          <Command.Group heading="Search" className={groupClass}>
+            <Command.Item
+              forceMount
+              value={`search-notes ${input}`}
+              className={itemClass}
+              onSelect={run(() => searchFor(input.trim()))}
+            >
+              Search notes for “{input.trim()}”
+            </Command.Item>
+          </Command.Group>
+        )}
 
         <Command.Group heading="Actions" className={groupClass}>
           <Command.Item className={itemClass} onSelect={run(createNote)}>
@@ -130,6 +152,22 @@ export function CommandPalette() {
           <Command.Item className={itemClass} onSelect={go({ kind: "daily" })}>
             Go to Daily notes
           </Command.Item>
+          <Command.Item className={itemClass} onSelect={go({ kind: "orphans" })}>
+            Go to Orphaned notes
+          </Command.Item>
+          <Command.Item className={itemClass} onSelect={go({ kind: "broken" })}>
+            Go to Broken links
+          </Command.Item>
+          {tagCounts.map((t) => (
+            <Command.Item
+              key={t.name}
+              value={`tag ${t.name}`}
+              className={itemClass}
+              onSelect={go({ kind: "tag", value: t.name })}
+            >
+              Go to tag: #{t.name}
+            </Command.Item>
+          ))}
           <Command.Item className={itemClass} onSelect={go({ kind: "archived" })}>
             Go to Archive
           </Command.Item>
