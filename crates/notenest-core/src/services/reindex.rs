@@ -14,10 +14,11 @@ use uuid::Uuid;
 use walkdir::WalkDir;
 
 use crate::database::Database;
+use crate::extract::extract;
 use crate::filesystem::{RelPath, Vault};
 use crate::frontmatter::{parse_meta, set_meta, MetaUpdate};
 use crate::hash::content_hash;
-use crate::models::{note_id_for_path, title_from_path, NoteRecord};
+use crate::models::{note_id_for_path, title_from_path, IndexEntry, NoteRecord};
 use crate::{Error, Result};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -42,7 +43,7 @@ fn is_temp_name(name: &str) -> bool {
 }
 
 struct Scan {
-    notes: Vec<NoteRecord>,
+    notes: Vec<IndexEntry>,
     folders: Vec<String>,
     report: ReindexReport,
 }
@@ -124,7 +125,7 @@ fn scan(vault: &Vault) -> Result<Scan> {
     }
 
     let now = Utc::now();
-    let mut notes: Vec<NoteRecord> = Vec::new();
+    let mut notes: Vec<IndexEntry> = Vec::new();
     let mut folders = Vec::new();
     let mut used_ids: HashSet<Uuid> = HashSet::new();
 
@@ -152,6 +153,7 @@ fn scan(vault: &Vault) -> Result<Scan> {
             .map_or(updated_at, |m| to_utc(m.created(), updated_at));
 
         let mut hash = content_hash(&bytes);
+        let mut rewritten_text: Option<String> = None;
         let mut id = meta.id.unwrap_or_else(|| note_id_for_path(&rel));
         if !used_ids.insert(id) {
             // Duplicate id: give this copy a new one and persist it.
@@ -167,6 +169,7 @@ fn scan(vault: &Vault) -> Result<Scan> {
                 Ok(()) => {
                     tracing::warn!(path = %rel, "duplicate note id replaced");
                     hash = content_hash(rewritten.as_bytes());
+                    rewritten_text = Some(rewritten);
                     id = fresh;
                     used_ids.insert(id);
                     report.duplicate_ids_fixed.push(rel.clone());
@@ -178,16 +181,20 @@ fn scan(vault: &Vault) -> Result<Scan> {
                 }
             }
         }
-        notes.push(NoteRecord {
-            id,
-            title: title_from_path(&rel),
-            path: rel,
-            created_at,
-            updated_at,
-            content_hash: hash,
-            pinned: meta.pinned,
-            archived: meta.archived,
-            last_opened_at: None,
+        let extracted = extract(rewritten_text.as_deref().unwrap_or(&text));
+        notes.push(IndexEntry {
+            record: NoteRecord {
+                id,
+                title: title_from_path(&rel),
+                path: rel,
+                created_at,
+                updated_at,
+                content_hash: hash,
+                pinned: meta.pinned,
+                archived: meta.archived,
+                last_opened_at: None,
+            },
+            extracted,
         });
     }
 
@@ -221,10 +228,10 @@ pub async fn reindex(vault: &Vault, db: &Database) -> Result<ReindexReport> {
         .into_iter()
         .map(|n| (n.id, n))
         .collect();
-    for note in &mut scanned.notes {
-        if let Some(old) = existing.get(&note.id) {
-            note.created_at = old.created_at;
-            note.last_opened_at = old.last_opened_at;
+    for entry in &mut scanned.notes {
+        if let Some(old) = existing.get(&entry.record.id) {
+            entry.record.created_at = old.created_at;
+            entry.record.last_opened_at = old.last_opened_at;
         }
     }
     db.replace_index(&scanned.notes, &scanned.folders).await?;

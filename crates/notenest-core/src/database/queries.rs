@@ -2,8 +2,10 @@ use chrono::{DateTime, Utc};
 use sqlx::Row;
 use uuid::Uuid;
 
+use super::knowledge::{delete_note_tx, prune_tags, write_derived};
 use super::Database;
-use crate::models::NoteRecord;
+use crate::extract::Extracted;
+use crate::models::{IndexEntry, NoteRecord};
 use crate::{Error, Result};
 
 fn parse_time(s: &str) -> Result<DateTime<Utc>> {
@@ -65,9 +67,11 @@ impl Database {
         row.as_ref().map(note_from_row).transpose()
     }
 
-    /// Inserts or updates a single note, keyed by id. `created_at` and
-    /// `last_opened_at` of an existing row are kept.
-    pub async fn upsert_note(&self, n: &NoteRecord) -> Result<()> {
+    /// Inserts or updates a note together with everything derived from its content,
+    /// atomically. Keyed by id; `created_at` and `last_opened_at` of an existing row
+    /// are kept.
+    pub async fn upsert_indexed(&self, n: &NoteRecord, x: &Extracted) -> Result<()> {
+        let mut tx = self.pool().begin().await?;
         sqlx::query(
             "INSERT INTO notes (id, path, title, created_at, updated_at, content_hash, pinned, archived) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
@@ -83,16 +87,24 @@ impl Database {
         .bind(&n.content_hash)
         .bind(i64::from(n.pinned))
         .bind(i64::from(n.archived))
-        .execute(self.pool())
+        .execute(&mut *tx)
         .await?;
+        write_derived(&mut tx, n, x, false).await?;
+        prune_tags(&mut tx).await?;
+        tx.commit().await?;
         Ok(())
     }
 
+    /// Like [`Database::upsert_indexed`] for a note with no content-derived data
+    /// (no tags or links); the title and path keys are still indexed.
+    pub async fn upsert_note(&self, n: &NoteRecord) -> Result<()> {
+        self.upsert_indexed(n, &Extracted::default()).await
+    }
+
     pub async fn delete_note(&self, id: Uuid) -> Result<()> {
-        sqlx::query("DELETE FROM notes WHERE id = ?1")
-            .bind(id.to_string())
-            .execute(self.pool())
-            .await?;
+        let mut tx = self.pool().begin().await?;
+        delete_note_tx(&mut tx, &id.to_string()).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -105,13 +117,21 @@ impl Database {
         Ok(())
     }
 
-    /// Replaces all notes and folders in one transaction (used by reindexing), so
-    /// readers never observe a half-built index.
-    pub async fn replace_index(&self, notes: &[NoteRecord], folders: &[String]) -> Result<()> {
+    /// Replaces the whole index (notes, everything derived from them, and folders) in
+    /// one transaction (used by reindexing), so readers never observe a half-built index.
+    pub async fn replace_index(&self, entries: &[IndexEntry], folders: &[String]) -> Result<()> {
         let mut tx = self.pool().begin().await?;
-        sqlx::query("DELETE FROM notes").execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM notes").execute(&mut *tx).await?; // cascades to derived tables
+        sqlx::query("DELETE FROM note_fts")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM tags").execute(&mut *tx).await?;
         sqlx::query("DELETE FROM folders").execute(&mut *tx).await?;
-        for n in notes {
+        for IndexEntry {
+            record: n,
+            extracted,
+        } in entries
+        {
             sqlx::query(&insert_note_sql())
                 .bind(n.id.to_string())
                 .bind(&n.path)
@@ -124,6 +144,7 @@ impl Database {
                 .bind(n.last_opened_at.map(|t| t.to_rfc3339()))
                 .execute(&mut *tx)
                 .await?;
+            write_derived(&mut tx, n, extracted, true).await?;
         }
         let mut sorted: Vec<&String> = folders.iter().collect();
         sorted.sort();

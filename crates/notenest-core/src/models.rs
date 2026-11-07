@@ -30,6 +30,13 @@ pub struct NoteRecord {
     pub last_opened_at: Option<DateTime<Utc>>,
 }
 
+/// A note together with everything derived from its content, ready to be indexed.
+#[derive(Debug, Clone)]
+pub struct IndexEntry {
+    pub record: NoteRecord,
+    pub extracted: crate::extract::Extracted,
+}
+
 /// Title of a note: its file name without the `.md` extension.
 #[must_use]
 pub fn title_from_path(path: &str) -> String {

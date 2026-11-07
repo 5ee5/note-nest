@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 use super::reindex::{reindex, ReindexReport};
 use crate::database::Database;
+use crate::extract::extract;
 use crate::filesystem::atomic::write_atomic;
 use crate::filesystem::trash::TrashEntry;
 use crate::filesystem::{RelPath, Vault, ATTACHMENTS_DIR};
@@ -178,7 +179,7 @@ impl Workspace {
             record
         } else {
             let fresh = self.build_record(&path, &bytes, Some(&record));
-            self.store(Some(&record), &fresh).await?;
+            self.store(Some(&record), &fresh, &content).await?;
             fresh
         };
         Ok(NoteContent { record, content })
@@ -212,7 +213,7 @@ impl Workspace {
         );
         self.vault.create_new(&path, content.as_bytes())?;
         let record = self.build_record(&path, content.as_bytes(), None);
-        self.store(None, &record).await?;
+        self.store(None, &record, &content).await?;
         Ok(record)
     }
 
@@ -255,7 +256,7 @@ impl Workspace {
         self.vault.write(&path, to_write.as_bytes())?;
         self.clear_draft_if_saved(id, content);
         let fresh = self.build_record(&path, to_write.as_bytes(), Some(&record));
-        self.store(Some(&record), &fresh).await?;
+        self.store(Some(&record), &fresh, &to_write).await?;
         Ok(NoteContent {
             record: fresh,
             content: to_write,
@@ -312,7 +313,7 @@ impl Workspace {
             self.unique_note_path(from.parent().as_ref(), &format!("{} copy", record.title))?;
         self.vault.create_new(&to, copy.as_bytes())?;
         let new = self.build_record(&to, copy.as_bytes(), None);
-        self.store(None, &new).await?;
+        self.store(None, &new, &copy).await?;
         Ok(new)
     }
 
@@ -515,13 +516,13 @@ impl Workspace {
     }
 
     /// Writes `new` to the index, replacing `old` when the id changed.
-    async fn store(&self, old: Option<&NoteRecord>, new: &NoteRecord) -> Result<()> {
+    async fn store(&self, old: Option<&NoteRecord>, new: &NoteRecord, content: &str) -> Result<()> {
         if let Some(old) = old {
             if old.id != new.id {
                 self.db.delete_note(old.id).await?;
             }
         }
-        self.db.upsert_note(new).await?;
+        self.db.upsert_indexed(new, &extract(content)).await?;
         if let Some(at) = new.last_opened_at {
             self.db.set_last_opened(new.id, at).await?;
         }
@@ -540,7 +541,8 @@ impl Workspace {
         self.vault.rename(from, to)?;
         let bytes = self.vault.read(to)?;
         let fresh = self.build_record(to, &bytes, Some(record));
-        self.store(Some(record), &fresh).await?;
+        self.store(Some(record), &fresh, &String::from_utf8_lossy(&bytes))
+            .await?;
         Ok(fresh)
     }
 
@@ -558,7 +560,7 @@ impl Workspace {
         let new_text = set_meta(&text, &update);
         self.vault.write(&path, new_text.as_bytes())?;
         let fresh = self.build_record(&path, new_text.as_bytes(), Some(&record));
-        self.store(Some(&record), &fresh).await?;
+        self.store(Some(&record), &fresh, &new_text).await?;
         Ok(fresh)
     }
 

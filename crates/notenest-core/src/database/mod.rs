@@ -3,7 +3,10 @@
 //! All SQL lives in this module. Queries use the runtime `sqlx::query` API (not
 //! the compile-time macros) so building never needs a live database.
 
+mod knowledge;
 mod queries;
+
+pub use knowledge::MAX_INDEXED_BODY_BYTES;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
