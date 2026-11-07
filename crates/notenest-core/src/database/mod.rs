@@ -4,9 +4,12 @@
 //! the compile-time macros) so building never needs a live database.
 
 mod knowledge;
+mod links;
 mod queries;
+mod search;
 
 pub use knowledge::MAX_INDEXED_BODY_BYTES;
+pub use links::{Candidate, Resolver};
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -244,5 +247,39 @@ mod tests {
             .await
             .unwrap();
         assert!(!opened.rebuilt && opened.backup.is_none());
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod testutil {
+    use chrono::Utc;
+
+    use super::Database;
+    use crate::extract::extract;
+    use crate::hash::content_hash;
+    use crate::models::{note_id_for_path, title_from_path, NoteRecord};
+
+    pub async fn db() -> (tempfile::TempDir, Database) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("index.db")).await.unwrap();
+        (dir, db)
+    }
+
+    /// Indexes a note as the app would (id derived from the path).
+    pub async fn add(db: &Database, path: &str, content: &str) -> NoteRecord {
+        let now = Utc::now();
+        let record = NoteRecord {
+            id: note_id_for_path(path),
+            path: path.to_owned(),
+            title: title_from_path(path),
+            created_at: now,
+            updated_at: now,
+            content_hash: content_hash(content.as_bytes()),
+            pinned: false,
+            archived: false,
+            last_opened_at: None,
+        };
+        db.upsert_indexed(&record, &extract(content)).await.unwrap();
+        record
     }
 }

@@ -85,8 +85,12 @@ pub(super) async fn write_derived(
             .await?;
     }
 
+    // A path key only counts as a path match when it is path-qualified; a root-level
+    // note's path key is just its title (so it does not outrank a same-folder note).
     // Insertion order is the precedence when keys coincide: path, then title, then alias.
-    let keys = std::iter::once((path_key(&n.path), "path"))
+    let pk = path_key(&n.path);
+    let pk_kind = if pk.contains('/') { "path" } else { "title" };
+    let keys = std::iter::once((pk, pk_kind))
         .chain(std::iter::once((n.title.to_lowercase(), "title")))
         .chain(x.aliases.iter().map(|a| (a.trim().to_lowercase(), "alias")));
     for (key, kind) in keys.filter(|(k, _)| !k.is_empty()) {

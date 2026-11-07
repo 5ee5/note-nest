@@ -37,6 +37,93 @@ pub struct IndexEntry {
     pub extracted: crate::extract::Extracted,
 }
 
+/// A highlighted fragment of text: `matched` parts are what the search found.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SnippetPart {
+    pub text: String,
+    pub matched: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SearchHit {
+    pub id: Uuid,
+    pub title: String,
+    pub path: String,
+    pub archived: bool,
+    pub title_parts: Vec<SnippetPart>,
+    pub snippet: Vec<SnippetPart>,
+}
+
+/// A tag with the number of notes using it (or one of its nested tags).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TagCount {
+    pub name: String,
+    pub count: usize,
+}
+
+/// Enough to show and open a note.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NoteRef {
+    pub id: Uuid,
+    pub title: String,
+    pub path: String,
+}
+
+/// A link in another note that points at this one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Backlink {
+    pub source: NoteRef,
+    pub line: usize,
+    pub context: String,
+    pub target_text: String,
+    pub display: Option<String>,
+}
+
+/// A link written in a note; `target` is `None` when it points at nothing (broken).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OutgoingLink {
+    pub target_text: String,
+    pub display: Option<String>,
+    pub line: usize,
+    pub context: String,
+    pub target: Option<NoteRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BrokenLink {
+    pub source: NoteRef,
+    pub target_text: String,
+    pub line: usize,
+    pub context: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GraphNode {
+    pub id: Uuid,
+    pub title: String,
+    pub path: String,
+    pub archived: bool,
+    /// Number of distinct notes this one is linked to or from.
+    pub degree: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Graph {
+    pub nodes: Vec<GraphNode>,
+    /// Directed `[from, to]` pairs between `nodes`, without duplicates or self loops.
+    pub edges: Vec<(Uuid, Uuid)>,
+    /// Notes in the whole vault (a local graph shows only some of them).
+    pub total_notes: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RelatedNote {
+    pub note: NoteRef,
+    pub shared_tags: usize,
+    /// Linked from or to the note.
+    pub linked: bool,
+}
+
 /// Title of a note: its file name without the `.md` extension.
 #[must_use]
 pub fn title_from_path(path: &str) -> String {
