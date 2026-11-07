@@ -7,12 +7,14 @@
 pub mod config;
 pub mod database;
 pub mod errors;
+pub mod extract;
 pub mod filesystem;
 pub mod frontmatter;
 pub mod hash;
 pub mod markdown;
 pub mod models;
 pub mod services;
+pub mod tag;
 
 pub use errors::{Error, Result};
 
