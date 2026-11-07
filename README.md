@@ -3,11 +3,11 @@
 Local-first, privacy-focused Markdown note-taking and personal knowledge management app.
 Markdown files are the source of truth; no accounts or cloud services required.
 
-**Status:** Milestone 2 (storage engine): notes are real Markdown files in a vault folder, with autosave, folders, trash and crash recovery. The editor is a plain textarea until Milestone 3.
+**Status:** Milestone 3 (Markdown editor): notes are real Markdown files in a vault folder, edited in a CodeMirror editor with formatting tools, live preview, image attachments and statistics, plus autosave, folders, trash and crash recovery. Tags, links and search arrive in Milestone 4.
 
 ## Stack
 
-Rust, Tauri 2, React, TypeScript, Tailwind CSS, Zustand, SQLite (sqlx), pnpm. (CodeMirror 6 arrives in Milestone 3.)
+Rust, Tauri 2, React, TypeScript, Tailwind CSS, Zustand, SQLite (sqlx), pnpm. CodeMirror 6, pulldown-cmark and ammonia.
 
 ## Layout
 

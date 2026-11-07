@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-NoteNest: local-first, offline Markdown note-taking app (Rust + Tauri 2 + React/TypeScript + Tailwind; SQLite and CodeMirror 6 planned). Markdown files on disk are the source of truth. The full spec is `docs/PROJECT_SPEC.md` (gitignored on purpose, kept locally); read it before implementing features, follow its milestone order, and do not build post-v1 features (sync, plugins, AI). Current state: Milestones 0-2 done (UI plus the storage engine: vault, SQLite index, autosave, trash, recovery); Milestone 3 (CodeMirror editor) is next. Decisions deviating from the spec go in `docs/DECISIONS.md`.
+NoteNest: local-first, offline Markdown note-taking app (Rust + Tauri 2 + React/TypeScript + Tailwind, SQLite, CodeMirror 6). Markdown files on disk are the source of truth. The full spec is `docs/PROJECT_SPEC.md` (gitignored on purpose, kept locally); read it before implementing features, follow its milestone order, and do not build post-v1 features (sync, plugins, AI). Current state: Milestones 0-3 done (UI, storage engine, CodeMirror editor with preview, attachments and statistics); Milestone 4 (tags, wiki links, backlinks, full-text search, favorites, recents, graph) is next. Decisions deviating from the spec go in `docs/DECISIONS.md`.
 
 ## Commands
 
@@ -13,7 +13,7 @@ NoteNest: local-first, offline Markdown note-taking app (Rust + Tauri 2 + React/
 - Desktop app: `pnpm tauri dev` / `pnpm tauri build` need WebKitGTK 4.1, which is not installed locally. Locally use `cargo test -p notenest-core`; to compile/lint the Tauri crate run it in a container: `scripts/docker-check.sh 'cargo clippy --workspace --all-targets -- -D warnings'`. CI builds it too. The desktop app itself has never been run locally.
 - pnpm is installed at `~/.local/bin` (corepack's is broken); add it to PATH.
 - CI: Forgejo Actions (`.forgejo/workflows/ci.yml`), runner `e5-gentoo-docker` is a background process from `~/forgejo-runner/` (not a service; may need restarting: `forgejo-runner -c ~/forgejo-runner/config.yml daemon`). Check runs with `fj -H git.5ee5.dev actions tasks`.
-- Visual checks: host Chromium lacks libs; run Playwright inside a `node:22-bookworm` container with `apt install chromium`.
+- Visual/browser checks: host Chromium lacks libs; run Playwright inside a `node:22-bookworm` container with `apt install chromium`. CodeMirror cannot run in happy-dom, so App tests stub the editor with a textarea; editor logic is tested headlessly on `EditorState` (see `src/components/editor/*.test.ts`) and real typing/paste/drop in Chromium.
 
 ## Architecture
 

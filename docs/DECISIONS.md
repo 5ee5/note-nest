@@ -71,3 +71,48 @@ pinned to ~5.9 because typescript-eslint does not support TS 7.
 - Files that are not valid UTF-8 are listed but cannot be opened, so they cannot be altered.
 - Windows and macOS filesystem behaviour (case-insensitive names, rename-over-existing) is not covered by
   tests because CI only runs on Linux.
+
+## Milestone 3: Markdown editor
+
+- **CodeMirror 6 directly, no React wrapper.** The editor and toolbar are lazily loaded chunks; the language
+  packs for fenced code load on demand. The editor store stays the source of truth: user edits flow in,
+  external changes (reload from disk, draft restore) flow out as minimal edits that keep the cursor.
+- **Frontmatter is shown folded as a "Properties" chip** and can be expanded and edited. An id guard (client
+  side, mirroring the backend) restores the note's `id` if an edit would drop or damage it.
+- **Line endings are preserved.** A note that uses CRLF throughout stays CRLF (CodeMirror would otherwise
+  normalize it to LF on the first save).
+- **Preview is rendered in Rust** (`pulldown-cmark` then an `ammonia` allowlist), as the spec places Markdown
+  processing in the backend, and the sanitizer stays outside the webview. Rules: no scripts, handlers,
+  iframes, forms or styles (the only inline CSS allowed is exact `text-align` on table cells); links keep only
+  `http`, `https`, `mailto` and `#fragments`; relative note links are inert until Milestone 4; images are
+  never fetched from the network. Relative image paths are resolved inside the vault (no `..` escapes, no
+  symlinks), checked by content, limited to 8 MB each / 32 MB per note, and inlined as `data:` URIs, which
+  avoids enabling Tauri's asset protocol. Task-list items render as read-only glyphs, not `<input>`s.
+- **The browser mock has no Markdown engine**; its preview shows the escaped text. The real renderer is
+  covered by Rust tests (including XSS vectors) and CI.
+- **Image attachments** go to `<vault>/Attachments/<name>-001.<ext>` (the spec's layout), referenced by a path
+  relative to the note. The type is decided by content (PNG, JPEG, GIF, WebP, SVG), never by name; limit
+  25 MiB. The folder is hidden from the folder list and reserved. Bytes travel to Rust as a raw IPC body
+  (metadata in headers), not a JSON array. The `image` crate is not needed yet.
+- **Two platform changes:** `tauri-plugin-opener`, scoped to `http`, `https` and `mailto`, opens external
+  links; `dragDropEnabled: false` lets dropped files reach the page, and a window-level guard cancels any drop
+  outside the editor so the webview can never navigate to a dropped file.
+- **Shortcuts:** Mod-B, Mod-I, Mod-Shift-X (strikethrough), Mod-E (code), Mod-Alt-1/2/3 (headings),
+  Mod-Shift-7/8/9 (numbered, bulleted, checklist), Mod-F (find and replace), Mod-S (save now), Tab/Shift-Tab
+  in lists. Mod-K stays with the command palette, so there is no link shortcut.
+- **Large-note safeguards** (found by profiling a 5 MB note): the Markdown parser re-parses a whole paragraph
+  on every edit, so a note over 8 MB or with an unbroken block over 100 KB opens as plain text (a large paste
+  triggers the same check); the preview of a note over 2 million characters renders on request; counting
+  trails typing for notes over 50 000 characters.
+
+### Known limitations (Milestone 3)
+
+- No scroll synchronization between the editor and the preview.
+- Preview checkboxes are display-only; links to other notes do nothing until Milestone 4.
+- The plain-text safeguard is checked when a note opens and on large single edits, not while typing a huge
+  block character by character.
+- Orphaned attachments (an image whose reference was deleted) are not cleaned up yet.
+- Table editing is limited to inserting a table; there is no cell navigation.
+- Clipboard paste and file drop, the opener plugin, and the raw-body attachment call have been verified in
+  Chromium and by compiling the Tauri crate, but not in the real desktop webviews (WebKitGTK, WebView2,
+  WKWebView).

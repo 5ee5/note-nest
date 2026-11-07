@@ -6,7 +6,7 @@
   `filesystem` (path validation, atomic writes, trash; the only code that touches the vault),
   `database` (SQLite pool, versioned migrations, all SQL), `frontmatter` (the three keys NoteNest owns),
   `services` (`Workspace`: every note and folder operation; `reindex`; draft `recovery`),
-  `config` (last-opened vault), `models`, `errors` (one serializable error enum with stable codes).
+  `markdown` (sanitized preview rendering), `config` (last-opened vault), `models`, `errors` (one serializable error enum with stable codes).
 - `src-tauri` is a thin adapter: `commands.rs` unwraps arguments and calls `Workspace`; `state.rs` holds the
   open workspace. Capabilities are minimal (`core:default`, `dialog:allow-open`); the CSP is restrictive.
 - Markdown files in the vault are the source of truth. `<vault>/.notenest/` holds the derived index
@@ -24,6 +24,10 @@
 - `lib/notes.ts`: pure view filtering/sorting; `lib/theme.ts`: theme resolution and persistence;
   `lib/shortcuts.ts`: platform-aware shortcut matching; `lib/actions.ts`: actions shared by shortcuts and
   the command palette.
+- `components/editor/`: the CodeMirror setup, split into testable pieces: `format.ts` (formatting commands as
+  pure state commands), `frontmatter.ts` (Properties fold and id guard), `text.ts` (line endings, minimal
+  resync), `images.ts` (paste/drop), `state.ts` (extensions and large-note guard), `theme.ts`. `MarkdownEditor`,
+  `FormatToolbar` and their dependencies load lazily; `MarkdownPreview` and `EditorStatusBar` do not need them.
 - `components/`: `AppLayout` (resizable/collapsible panels via react-resizable-panels), `Sidebar`,
   `NoteExplorer`, `EditorPane` (textarea until CodeMirror), `CommandPalette` (cmdk), `SettingsDialog` (Radix Dialog).
 - Theming uses semantic CSS variables in `index.css` selected by `data-theme` on `<html>`; components use
