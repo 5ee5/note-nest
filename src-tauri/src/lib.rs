@@ -44,6 +44,22 @@ pub fn run() {
             commands::set_setting,
             commands::render_markdown,
             commands::add_attachment,
+            commands::search_notes,
+            commands::list_tags,
+            commands::note_links,
+            commands::graph,
+            commands::orphans,
+            commands::broken_links,
+            commands::resolve_link,
+            commands::set_tags,
+            commands::preview_rename_note,
+            commands::preview_move_note,
+            commands::preview_rename_folder,
+            commands::preview_move_folder,
+            commands::rename_note_with_links,
+            commands::move_note_with_links,
+            commands::rename_folder_with_links,
+            commands::move_folder_with_links,
         ])
         .run(tauri::generate_context!())
         .expect("error while running NoteNest");

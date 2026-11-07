@@ -3,6 +3,7 @@
 pub mod attachments;
 #[cfg(test)]
 mod invariant;
+pub mod knowledge;
 pub mod link_update;
 pub mod recovery;
 pub mod reindex;

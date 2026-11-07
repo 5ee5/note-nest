@@ -23,7 +23,7 @@ use crate::filesystem::trash::TrashEntry;
 use crate::filesystem::{RelPath, Vault, ATTACHMENTS_DIR};
 use crate::frontmatter::{parse_meta, set_meta, set_tags, MetaUpdate};
 use crate::hash::content_hash;
-use crate::markdown::{render_markdown, ImageContext, RenderLimits, Rendered};
+use crate::markdown::{render_markdown_with_links, ImageContext, LinkMap, RenderLimits, Rendered};
 use crate::models::{note_id_for_path, title_from_path, NoteRecord};
 use crate::{Error, Result};
 
@@ -391,18 +391,29 @@ impl Workspace {
     /// # Errors
     /// [`Error::NotFound`] for an unknown id; [`Error::TooLarge`] for oversized input.
     pub async fn render_markdown(&self, id: Option<Uuid>, content: String) -> Result<Rendered> {
-        let images = match id {
+        let (images, links) = match id {
             Some(id) => {
                 let record = self.record(id).await?;
-                Some(ImageContext {
+                // Resolve every wiki link now (async), so rendering itself can run off-thread.
+                let resolver = self.db.resolver().await?;
+                let map: LinkMap = extract(&content)
+                    .links
+                    .into_iter()
+                    .map(|l| {
+                        let target = resolver.resolve(&record.path, &l.key).map(|c| c.id);
+                        (l.key, target)
+                    })
+                    .collect();
+                let images = ImageContext {
                     vault: self.vault.clone(),
                     note_dir: RelPath::new(&record.path)?.parent(),
-                })
+                };
+                (Some(images), Some(map))
             }
-            None => None,
+            None => (None, None),
         };
         tokio::task::spawn_blocking(move || {
-            render_markdown(&content, images, &RenderLimits::default())
+            render_markdown_with_links(&content, images, links.as_ref(), &RenderLimits::default())
         })
         .await
         .map_err(|e| Error::Io {

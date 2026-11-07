@@ -233,6 +233,35 @@ impl Database {
             .collect()
     }
 
+    /// Tags of every note: `(frontmatter tags, inline-only tags)` by note id.
+    pub async fn note_tag_map(
+        &self,
+    ) -> Result<std::collections::HashMap<Uuid, (Vec<String>, Vec<String>)>> {
+        let rows = sqlx::query(
+            "SELECT nt.note_id, t.name, nt.source FROM note_tags nt JOIN tags t ON t.id = nt.tag_id ORDER BY t.name",
+        )
+        .fetch_all(self.pool())
+        .await?;
+        let mut map: std::collections::HashMap<Uuid, (Vec<String>, Vec<String>)> =
+            std::collections::HashMap::new();
+        for r in rows {
+            let id = Uuid::parse_str(&r.try_get::<String, _>("note_id")?).map_err(|e| {
+                Error::Corrupt {
+                    context: "note id".into(),
+                    message: e.to_string(),
+                }
+            })?;
+            let name: String = r.try_get("name")?;
+            let entry = map.entry(id).or_default();
+            if r.try_get::<String, _>("source")? == "frontmatter" {
+                entry.0.push(name);
+            } else {
+                entry.1.push(name);
+            }
+        }
+        Ok(map)
+    }
+
     /// Every tag with the number of notes using it. A nested tag also counts toward its
     /// parents (`a/b/c` is listed as `a`, `a/b` and `a/b/c`), so a parent's count is the
     /// number of notes a click on it would show.

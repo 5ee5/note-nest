@@ -124,6 +124,25 @@ pub struct RelatedNote {
     pub linked: bool,
 }
 
+/// A note in a list: its record plus its tags.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NoteEntry {
+    #[serde(flatten)]
+    pub record: NoteRecord,
+    /// Tags from the frontmatter `tags:` list.
+    pub tags: Vec<String>,
+    /// Tags that appear only as `#tag` in the text.
+    pub inline_tags: Vec<String>,
+}
+
+/// Everything shown about a note's connections.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NoteLinks {
+    pub backlinks: Vec<Backlink>,
+    pub outgoing: Vec<OutgoingLink>,
+    pub related: Vec<RelatedNote>,
+}
+
 /// Title of a note: its file name without the `.md` extension.
 #[must_use]
 pub fn title_from_path(path: &str) -> String {

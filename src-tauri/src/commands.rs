@@ -3,8 +3,13 @@ use std::path::{Path, PathBuf};
 use notenest_core::config::AppConfig;
 use notenest_core::filesystem::trash::TrashEntry;
 use notenest_core::markdown::Rendered;
-use notenest_core::models::NoteRecord;
-use notenest_core::services::{Attachment, Draft, NoteContent, SaveMode, Workspace};
+use notenest_core::models::{
+    BrokenLink, Graph, NoteEntry, NoteLinks, NoteRecord, NoteRef, SearchHit, TagCount,
+};
+use notenest_core::services::{
+    AffectedNote, Attachment, Draft, LinkUpdateReport, NoteContent, RenameOutcome, SaveMode,
+    Workspace,
+};
 use notenest_core::{Error, Result};
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
@@ -91,8 +96,8 @@ pub async fn reindex(state: State<'_, AppState>) -> Result<usize> {
 }
 
 #[tauri::command]
-pub async fn list_notes(state: State<'_, AppState>) -> Result<Vec<NoteRecord>> {
-    state.workspace().await?.list_notes().await
+pub async fn list_notes(state: State<'_, AppState>) -> Result<Vec<NoteEntry>> {
+    state.workspace().await?.list_entries().await
 }
 
 #[tauri::command]
@@ -331,4 +336,174 @@ fn percent_decode(s: &str) -> String {
         }
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+// ------------------------------------------------------------ knowledge
+
+#[tauri::command]
+pub async fn search_notes(
+    state: State<'_, AppState>,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<SearchHit>> {
+    state
+        .workspace()
+        .await?
+        .search(&query, limit.unwrap_or(50))
+        .await
+}
+
+#[tauri::command]
+pub async fn list_tags(state: State<'_, AppState>) -> Result<Vec<TagCount>> {
+    state.workspace().await?.list_tags().await
+}
+
+#[tauri::command]
+pub async fn note_links(state: State<'_, AppState>, id: Uuid) -> Result<NoteLinks> {
+    state.workspace().await?.note_links(id).await
+}
+
+#[tauri::command]
+pub async fn graph(
+    state: State<'_, AppState>,
+    center: Option<Uuid>,
+    depth: Option<usize>,
+) -> Result<Graph> {
+    state
+        .workspace()
+        .await?
+        .graph(center, depth.unwrap_or(1))
+        .await
+}
+
+#[tauri::command]
+pub async fn orphans(state: State<'_, AppState>) -> Result<Vec<NoteRef>> {
+    state.workspace().await?.orphans().await
+}
+
+#[tauri::command]
+pub async fn broken_links(state: State<'_, AppState>) -> Result<Vec<BrokenLink>> {
+    state.workspace().await?.broken_links().await
+}
+
+#[tauri::command]
+pub async fn resolve_link(
+    state: State<'_, AppState>,
+    source: Uuid,
+    target: String,
+) -> Result<Option<NoteRef>> {
+    state.workspace().await?.resolve_link(source, &target).await
+}
+
+#[tauri::command]
+pub async fn set_tags(
+    state: State<'_, AppState>,
+    id: Uuid,
+    tags: Vec<String>,
+) -> Result<NoteRecord> {
+    state.workspace().await?.set_tags(id, &tags).await
+}
+
+#[tauri::command]
+pub async fn preview_rename_note(
+    state: State<'_, AppState>,
+    id: Uuid,
+    new_title: String,
+) -> Result<Vec<AffectedNote>> {
+    state
+        .workspace()
+        .await?
+        .preview_rename_note(id, &new_title)
+        .await
+}
+
+#[tauri::command]
+pub async fn preview_move_note(
+    state: State<'_, AppState>,
+    id: Uuid,
+    folder: Option<String>,
+) -> Result<Vec<AffectedNote>> {
+    state
+        .workspace()
+        .await?
+        .preview_move_note(id, folder.as_deref())
+        .await
+}
+
+#[tauri::command]
+pub async fn preview_rename_folder(
+    state: State<'_, AppState>,
+    path: String,
+    new_name: String,
+) -> Result<Vec<AffectedNote>> {
+    state
+        .workspace()
+        .await?
+        .preview_rename_folder(&path, &new_name)
+        .await
+}
+
+#[tauri::command]
+pub async fn preview_move_folder(
+    state: State<'_, AppState>,
+    path: String,
+    new_parent: Option<String>,
+) -> Result<Vec<AffectedNote>> {
+    state
+        .workspace()
+        .await?
+        .preview_move_folder(&path, new_parent.as_deref())
+        .await
+}
+
+#[tauri::command]
+pub async fn rename_note_with_links(
+    state: State<'_, AppState>,
+    id: Uuid,
+    new_title: String,
+) -> Result<RenameOutcome> {
+    state
+        .workspace()
+        .await?
+        .rename_note_with_links(id, &new_title)
+        .await
+}
+
+#[tauri::command]
+pub async fn move_note_with_links(
+    state: State<'_, AppState>,
+    id: Uuid,
+    folder: Option<String>,
+) -> Result<RenameOutcome> {
+    state
+        .workspace()
+        .await?
+        .move_note_with_links(id, folder.as_deref())
+        .await
+}
+
+#[tauri::command]
+pub async fn rename_folder_with_links(
+    state: State<'_, AppState>,
+    path: String,
+    new_name: String,
+) -> Result<LinkUpdateReport> {
+    state
+        .workspace()
+        .await?
+        .rename_folder_with_links(&path, &new_name)
+        .await
+}
+
+#[tauri::command]
+pub async fn move_folder_with_links(
+    state: State<'_, AppState>,
+    path: String,
+    new_parent: Option<String>,
+) -> Result<LinkUpdateReport> {
+    state
+        .workspace()
+        .await?
+        .move_folder_with_links(&path, new_parent.as_deref())
+        .await
 }

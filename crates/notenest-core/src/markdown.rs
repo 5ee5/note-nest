@@ -15,9 +15,11 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use pulldown_cmark::{html, Event, Options, Parser};
+use pulldown_cmark::{html, CowStr, Event, LinkType, Options, Parser, Tag};
 use serde::Serialize;
+use uuid::Uuid;
 
+use crate::extract::link_key;
 use crate::filesystem::image::ImageKind;
 use crate::filesystem::{RelPath, Vault};
 use crate::frontmatter;
@@ -60,13 +62,34 @@ pub struct Rendered {
     pub warnings: Vec<String>,
 }
 
-/// Renders a note's Markdown (frontmatter excluded) to sanitized HTML.
+/// What each wiki link target (as a lower-cased key) points at: a note id, or `None`
+/// when it points at nothing.
+pub type LinkMap = std::collections::HashMap<String, Option<Uuid>>;
+
+/// Renders a note's Markdown (frontmatter excluded) to sanitized HTML. Wiki links stay
+/// inert; see [`render_markdown_with_links`].
 ///
 /// # Errors
 /// [`Error::TooLarge`] if the input exceeds `limits.max_input_bytes`.
 pub fn render_markdown(
     content: &str,
     images: Option<ImageContext>,
+    limits: &RenderLimits,
+) -> Result<Rendered> {
+    render_markdown_with_links(content, images, None, limits)
+}
+
+/// Like [`render_markdown`], and with `links` given, `[[wiki links]]` become internal
+/// links: `#nn-note=<uuid>` when they resolve, `#nn-missing` (titled "Note not found: X")
+/// when they do not. The app turns clicks on those fragments into "open note" and
+/// "create note"; no other link form is affected.
+///
+/// # Errors
+/// [`Error::TooLarge`] if the input exceeds `limits.max_input_bytes`.
+pub fn render_markdown_with_links(
+    content: &str,
+    images: Option<ImageContext>,
+    links: Option<&LinkMap>,
     limits: &RenderLimits,
 ) -> Result<Rendered> {
     if content.len() > limits.max_input_bytes {
@@ -77,11 +100,37 @@ pub fn render_markdown(
     }
     let source = frontmatter::body(content);
 
-    let options =
-        Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
+    let options = Options::ENABLE_TABLES
+        | Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_TASKLISTS
+        | Options::ENABLE_WIKILINKS;
     // Task-list markers become plain glyphs: no <input> elements are ever emitted.
     let events = Parser::new_ext(source, options).map(|e| match e {
         Event::TaskListMarker(done) => Event::Text(if done { "☑ " } else { "☐ " }.into()),
+        Event::Start(Tag::Link {
+            link_type: link_type @ LinkType::WikiLink { .. },
+            dest_url,
+            title,
+            id,
+        }) => {
+            let key = link_key(&dest_url);
+            let (dest_url, title) = match links {
+                Some(map) if !key.is_empty() => match map.get(&key) {
+                    Some(Some(note)) => (CowStr::from(format!("#nn-note={note}")), title),
+                    _ => (
+                        CowStr::from("#nn-missing"),
+                        CowStr::from(format!("Note not found: {dest_url}")),
+                    ),
+                },
+                _ => (dest_url, title),
+            };
+            Event::Start(Tag::Link {
+                link_type,
+                dest_url,
+                title,
+                id,
+            })
+        }
         other => other,
     });
     let mut raw = String::with_capacity(source.len() * 2);
@@ -576,5 +625,121 @@ mod tests {
         ] {
             let _ = render(md);
         }
+    }
+}
+
+#[cfg(test)]
+mod wiki_tests {
+    use super::*;
+
+    fn render(md: &str, map: &LinkMap) -> String {
+        render_markdown_with_links(md, None, Some(map), &RenderLimits::default())
+            .unwrap()
+            .html
+    }
+
+    #[test]
+    fn resolved_links_point_at_the_note_and_missing_ones_say_so() {
+        let id = Uuid::new_v4();
+        let map = LinkMap::from([("known".to_owned(), Some(id)), ("gone".to_owned(), None)]);
+        let html = render(
+            "[[Known]] [[Known|shown text]] [[Known#Heading]] [[Gone]] [[Unlisted]]",
+            &map,
+        );
+        assert_eq!(
+            html.matches(&format!("href=\"#nn-note={id}\"")).count(),
+            3,
+            "{html}"
+        );
+        assert!(html.contains(">shown text</a>"));
+        assert_eq!(html.matches("href=\"#nn-missing\"").count(), 2, "{html}");
+        assert!(html.contains("title=\"Note not found: Gone\""), "{html}");
+    }
+
+    #[test]
+    fn without_a_link_map_wiki_links_stay_inert() {
+        let html = render_markdown("[[Anything]]", None, &RenderLimits::default())
+            .unwrap()
+            .html;
+        assert!(
+            html.contains("Anything") && !html.contains("nn-note") && !html.contains("href"),
+            "{html}"
+        );
+    }
+
+    #[test]
+    fn hostile_targets_cannot_inject_markup_or_other_urls() {
+        /// Names of the attributes of one tag, read with quotes respected.
+        fn attribute_names(tag: &str) -> Vec<String> {
+            let mut names = Vec::new();
+            let mut rest = tag
+                .trim_start_matches(|c: char| !c.is_whitespace())
+                .trim_start();
+            while !rest.is_empty() {
+                let end = rest
+                    .find(|c: char| c == '=' || c.is_whitespace())
+                    .unwrap_or(rest.len());
+                names.push(rest[..end].to_owned());
+                rest = rest[end..].trim_start();
+                if let Some(after) = rest.strip_prefix('=') {
+                    let after = after.trim_start();
+                    rest = match after.strip_prefix('"') {
+                        Some(quoted) => quoted.split_once('"').map_or("", |(_, r)| r),
+                        None => after.split_once(char::is_whitespace).map_or("", |(_, r)| r),
+                    }
+                    .trim_start();
+                }
+            }
+            names
+        }
+
+        let map = LinkMap::new();
+        for target in [
+            "<script>alert(1)</script>",
+            "javascript:alert(1)",
+            "\" onmouseover=\"x",
+            "a\u{0}b",
+            "https://evil.example",
+            "\"><img src=x onerror=alert(1)>",
+        ] {
+            let html = render(&format!("[[{target}]]"), &map);
+            for tag in html
+                .split('<')
+                .skip(1)
+                .map(|t| t.split('>').next().unwrap_or(""))
+            {
+                if tag.starts_with('/') || tag == "p" {
+                    continue;
+                }
+                assert!(
+                    tag.starts_with("a "),
+                    "{target:?} produced an unexpected element <{tag}>: {html}"
+                );
+                for name in attribute_names(tag) {
+                    assert!(
+                        ["href", "title", "rel"].contains(&name.as_str()),
+                        "{target:?} produced attribute {name:?}: {html}"
+                    );
+                }
+            }
+            for href in html.split("href=\"").skip(1) {
+                assert!(
+                    href.starts_with("#nn-"),
+                    "{target:?} produced a non-internal href: {html}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn code_and_ordinary_links_are_not_wiki_links() {
+        let id = Uuid::new_v4();
+        let map = LinkMap::from([("x".to_owned(), Some(id))]);
+        let html = render(
+            "`[[x]]` and [text](https://example.com) and\n\n```\n[[x]]\n```\n",
+            &map,
+        );
+        assert!(!html.contains("nn-note"), "{html}");
+        assert!(html.contains("href=\"https://example.com\""));
     }
 }
