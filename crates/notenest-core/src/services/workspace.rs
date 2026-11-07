@@ -21,7 +21,7 @@ use crate::extract::extract;
 use crate::filesystem::atomic::write_atomic;
 use crate::filesystem::trash::TrashEntry;
 use crate::filesystem::{RelPath, Vault, ATTACHMENTS_DIR};
-use crate::frontmatter::{parse_meta, set_meta, MetaUpdate};
+use crate::frontmatter::{parse_meta, set_meta, set_tags, MetaUpdate};
 use crate::hash::content_hash;
 use crate::markdown::{render_markdown, ImageContext, RenderLimits, Rendered};
 use crate::models::{note_id_for_path, title_from_path, NoteRecord};
@@ -333,6 +333,30 @@ impl Workspace {
         .await
     }
 
+    /// Replaces the note's frontmatter `tags` list (tags are normalized; invalid names are
+    /// dropped). Inline `#tags` in the text are not touched. Only the frontmatter changes.
+    ///
+    /// # Errors
+    /// [`Error::Corrupt`] if the file is not valid UTF-8.
+    pub async fn set_tags(&self, id: Uuid, tags: &[String]) -> Result<NoteRecord> {
+        let _g = self.write_lock.lock().await;
+        let record = self.record(id).await?;
+        let path = RelPath::new(&record.path)?;
+        let bytes = self.vault.read(&path)?;
+        let text = String::from_utf8(bytes).map_err(|_| Error::Corrupt {
+            context: record.path.clone(),
+            message: "not valid UTF-8; refusing to modify it".into(),
+        })?;
+        let new_text = set_tags(&text, tags);
+        if new_text == text {
+            return Ok(record);
+        }
+        self.vault.write(&path, new_text.as_bytes())?;
+        let fresh = self.build_record(&path, new_text.as_bytes(), Some(&record));
+        self.store(Some(&record), &fresh, &new_text).await?;
+        Ok(fresh)
+    }
+
     /// Archives or unarchives a note (stored in frontmatter, like pinning).
     ///
     /// # Errors
@@ -452,14 +476,14 @@ impl Workspace {
 
     // ---------------------------------------------------------------- helpers
 
-    async fn record(&self, id: Uuid) -> Result<NoteRecord> {
+    pub(super) async fn record(&self, id: Uuid) -> Result<NoteRecord> {
         self.db
             .get_note(id)
             .await?
             .ok_or_else(|| Error::NotFound(format!("note {id}")))
     }
 
-    fn folder_path(&self, folder: Option<&str>) -> Result<Option<RelPath>> {
+    pub(super) fn folder_path(&self, folder: Option<&str>) -> Result<Option<RelPath>> {
         let Some(f) = folder else { return Ok(None) };
         let rel = RelPath::new(f)?;
         if !self.vault.resolve(&rel)?.is_dir() {
@@ -485,7 +509,12 @@ impl Workspace {
 
     /// Builds an index record from file bytes. `prev` supplies `created_at` and
     /// `last_opened_at` of an existing record.
-    fn build_record(&self, path: &RelPath, bytes: &[u8], prev: Option<&NoteRecord>) -> NoteRecord {
+    pub(super) fn build_record(
+        &self,
+        path: &RelPath,
+        bytes: &[u8],
+        prev: Option<&NoteRecord>,
+    ) -> NoteRecord {
         let text = String::from_utf8_lossy(bytes);
         let meta = parse_meta(&text);
         let fs_meta = self
@@ -516,7 +545,12 @@ impl Workspace {
     }
 
     /// Writes `new` to the index, replacing `old` when the id changed.
-    async fn store(&self, old: Option<&NoteRecord>, new: &NoteRecord, content: &str) -> Result<()> {
+    pub(super) async fn store(
+        &self,
+        old: Option<&NoteRecord>,
+        new: &NoteRecord,
+        content: &str,
+    ) -> Result<()> {
         if let Some(old) = old {
             if old.id != new.id {
                 self.db.delete_note(old.id).await?;
@@ -529,7 +563,7 @@ impl Workspace {
         Ok(())
     }
 
-    async fn relocate(
+    pub(super) async fn relocate(
         &self,
         record: &NoteRecord,
         from: &RelPath,
@@ -604,7 +638,7 @@ fn reject_reserved(path: &RelPath) -> Result<()> {
 
 /// Joins a single name onto `dir`; names containing `/` are rejected so a
 /// title can never create nested paths.
-fn child(dir: Option<&RelPath>, name: &str) -> Result<RelPath> {
+pub(super) fn child(dir: Option<&RelPath>, name: &str) -> Result<RelPath> {
     if name.contains('/') {
         return Err(Error::InvalidPath(format!(
             "{name:?}: name must not contain '/'"

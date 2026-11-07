@@ -68,6 +68,61 @@ impl Resolver {
     }
 }
 
+impl Resolver {
+    /// A copy of this resolver as it would be after the given notes got new paths and
+    /// titles (`id -> (new path, new title)`): their path and title keys move, their alias
+    /// keys stay. Used to preview what a rename or move would do to existing links.
+    #[must_use]
+    pub fn simulate(&self, moves: &HashMap<Uuid, (String, String)>) -> Resolver {
+        let mut by_key: HashMap<String, Vec<Candidate>> = HashMap::new();
+        for (key, list) in &self.by_key {
+            for c in list {
+                let mut c = c.clone();
+                if let Some((path, title)) = moves.get(&c.id) {
+                    if c.kind != Kind::Alias {
+                        continue; // path and title keys are re-added below under the new names
+                    }
+                    // Alias keys stay, but now point at the note's new location.
+                    c.path.clone_from(path);
+                    c.title.clone_from(title);
+                }
+                by_key.entry(key.clone()).or_default().push(c);
+            }
+        }
+        for (id, (path, title)) in moves {
+            let pk = super::knowledge::path_key(path);
+            let kind = if pk.contains('/') {
+                Kind::Path
+            } else {
+                Kind::Title
+            };
+            for (key, kind) in [(pk, kind), (title.to_lowercase(), Kind::Title)] {
+                let list = by_key.entry(key).or_default();
+                if !list.iter().any(|c| c.id == *id) {
+                    list.push(Candidate {
+                        id: *id,
+                        title: title.clone(),
+                        path: path.clone(),
+                        kind,
+                    });
+                }
+            }
+        }
+        Resolver { by_key }
+    }
+}
+
+/// A link (anywhere in the vault) that resolves to one of a set of notes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapturedLink {
+    pub source_path: String,
+    pub target_id: Uuid,
+    pub target_path: String,
+    /// The target exactly as written, e.g. `Folder/Note#Heading`.
+    pub target_text: String,
+    pub line: usize,
+}
+
 fn parse_id(s: &str) -> Result<Uuid> {
     Uuid::parse_str(s).map_err(|e| Error::Corrupt {
         context: "note id".into(),
@@ -171,6 +226,30 @@ impl Database {
             })
         })
         .collect()
+    }
+
+    /// Every link whose target is one of `targets` (including links from a target to itself
+    /// or to another target), as currently resolved.
+    pub async fn links_to(
+        &self,
+        targets: &std::collections::HashSet<Uuid>,
+    ) -> Result<Vec<CapturedLink>> {
+        let resolver = self.resolver().await?;
+        Ok(self
+            .all_links()
+            .await?
+            .into_iter()
+            .filter_map(|l| {
+                let c = resolver.resolve(&l.source_path, &l.key)?;
+                targets.contains(&c.id).then(|| CapturedLink {
+                    source_path: l.source_path,
+                    target_id: c.id,
+                    target_path: c.path.clone(),
+                    target_text: l.target_text,
+                    line: l.line,
+                })
+            })
+            .collect())
     }
 
     /// Links in other notes that resolve to `id`, in path and line order.

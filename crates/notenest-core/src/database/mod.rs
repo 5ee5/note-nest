@@ -9,7 +9,7 @@ mod queries;
 mod search;
 
 pub use knowledge::MAX_INDEXED_BODY_BYTES;
-pub use links::{Candidate, Resolver};
+pub use links::{Candidate, CapturedLink, Resolver};
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
