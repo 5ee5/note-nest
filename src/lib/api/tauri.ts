@@ -1,7 +1,17 @@
 import { invoke, type InvokeArgs, type InvokeOptions } from "@tauri-apps/api/core";
 import { toApiError } from "./errors";
 import type {
+  AffectedNote,
   Attachment,
+  Backlink,
+  BrokenLink,
+  Graph,
+  LinkUpdateReport,
+  NoteLinks,
+  NoteRef,
+  RenameOutcome,
+  SearchHit,
+  TagCount,
   Draft,
   NoteDoc,
   NoteSummary,
@@ -22,6 +32,8 @@ interface NoteRecord {
   pinned: boolean;
   archived: boolean;
   last_opened_at: string | null;
+  tags?: string[];
+  inline_tags?: string[];
 }
 interface NoteContent {
   record: NoteRecord;
@@ -50,7 +62,8 @@ export function toSummary(r: NoteRecord): NoteSummary {
     title: r.title,
     path: r.path,
     folder: slash === -1 ? "" : r.path.slice(0, slash),
-    tags: [], // tags arrive with the knowledge-management milestone
+    tags: [...(r.tags ?? []), ...(r.inline_tags ?? [])],
+    inlineTags: r.inline_tags ?? [],
     pinned: r.pinned,
     archived: r.archived,
     preview: "", // previews arrive with search
@@ -79,6 +92,66 @@ function toDraft(d: DraftDto): Draft {
     diskChanged: d.disk_changed,
   };
 }
+
+// ---- knowledge DTOs (snake_case from Rust) ----
+interface PartDto {
+  text: string;
+  matched: boolean;
+}
+interface HitDto {
+  id: string;
+  title: string;
+  path: string;
+  archived: boolean;
+  title_parts: PartDto[];
+  snippet: PartDto[];
+}
+interface BacklinkDto {
+  source: NoteRef;
+  line: number;
+  context: string;
+  target_text: string;
+  display: string | null;
+}
+interface OutgoingDto {
+  target_text: string;
+  display: string | null;
+  line: number;
+  context: string;
+  target: NoteRef | null;
+}
+interface BrokenDto {
+  source: NoteRef;
+  target_text: string;
+  line: number;
+  context: string;
+}
+interface RelatedDto {
+  note: NoteRef;
+  shared_tags: number;
+  linked: boolean;
+}
+interface NoteLinksDto {
+  backlinks: BacklinkDto[];
+  outgoing: OutgoingDto[];
+  related: RelatedDto[];
+}
+interface GraphDto {
+  nodes: Graph["nodes"];
+  edges: [string, string][];
+  total_notes: number;
+}
+interface ReportDto {
+  updated: AffectedNote[];
+  skipped: { note: NoteRef; reason: string }[];
+  backup_dir: string | null;
+}
+
+const toReport = (r: ReportDto): LinkUpdateReport => ({
+  updated: r.updated,
+  skipped: r.skipped,
+  backupDir: r.backup_dir,
+});
 
 /** Calls a Rust command, normalizing rejections into `ApiError`. */
 export async function call<T>(cmd: string, args?: InvokeArgs, options?: InvokeOptions): Promise<T> {
@@ -197,6 +270,112 @@ export class TauriNotesApi implements NotesApi {
       headers,
     });
     return { vaultPath: r.vault_path, markdownPath: r.markdown_path };
+  }
+
+  async searchNotes(query: string, limit = 50): Promise<SearchHit[]> {
+    return (await call<HitDto[]>("search_notes", { query, limit })).map((h) => ({
+      id: h.id,
+      title: h.title,
+      path: h.path,
+      archived: h.archived,
+      titleParts: h.title_parts,
+      snippet: h.snippet,
+    }));
+  }
+
+  listTags(): Promise<TagCount[]> {
+    return call("list_tags");
+  }
+
+  async getNoteLinks(id: string): Promise<NoteLinks> {
+    const r = await call<NoteLinksDto>("note_links", { id });
+    return {
+      backlinks: r.backlinks.map((b): Backlink => ({
+        source: b.source,
+        line: b.line,
+        context: b.context,
+        targetText: b.target_text,
+        display: b.display,
+      })),
+      outgoing: r.outgoing.map((o) => ({
+        targetText: o.target_text,
+        display: o.display,
+        line: o.line,
+        context: o.context,
+        target: o.target,
+      })),
+      related: r.related.map((x) => ({
+        note: x.note,
+        sharedTags: x.shared_tags,
+        linked: x.linked,
+      })),
+    };
+  }
+
+  async getGraph(center: string | null = null, depth = 1): Promise<Graph> {
+    const g = await call<GraphDto>("graph", { center, depth });
+    return { nodes: g.nodes, edges: g.edges, totalNotes: g.total_notes };
+  }
+
+  listOrphans(): Promise<NoteRef[]> {
+    return call("orphans");
+  }
+
+  async listBrokenLinks(): Promise<BrokenLink[]> {
+    return (await call<BrokenDto[]>("broken_links")).map((b) => ({
+      source: b.source,
+      targetText: b.target_text,
+      line: b.line,
+      context: b.context,
+    }));
+  }
+
+  resolveLink(sourceId: string, target: string): Promise<NoteRef | null> {
+    return call("resolve_link", { source: sourceId, target });
+  }
+
+  async setTags(id: string, tags: string[]) {
+    return toSummary(await call<NoteRecord>("set_tags", { id, tags }));
+  }
+
+  previewRenameNote(id: string, title: string): Promise<AffectedNote[]> {
+    return call("preview_rename_note", { id, newTitle: title });
+  }
+
+  previewMoveNote(id: string, folder: string | null): Promise<AffectedNote[]> {
+    return call("preview_move_note", { id, folder });
+  }
+
+  previewRenameFolder(path: string, newName: string): Promise<AffectedNote[]> {
+    return call("preview_rename_folder", { path, newName });
+  }
+
+  previewMoveFolder(path: string, newParent: string | null): Promise<AffectedNote[]> {
+    return call("preview_move_folder", { path, newParent });
+  }
+
+  async renameNoteWithLinks(id: string, title: string): Promise<RenameOutcome> {
+    const r = await call<{ record: NoteRecord; links: ReportDto }>("rename_note_with_links", {
+      id,
+      newTitle: title,
+    });
+    return { note: toSummary(r.record), links: toReport(r.links) };
+  }
+
+  async moveNoteWithLinks(id: string, folder: string | null): Promise<RenameOutcome> {
+    const r = await call<{ record: NoteRecord; links: ReportDto }>("move_note_with_links", {
+      id,
+      folder,
+    });
+    return { note: toSummary(r.record), links: toReport(r.links) };
+  }
+
+  async renameFolderWithLinks(path: string, newName: string): Promise<LinkUpdateReport> {
+    return toReport(await call<ReportDto>("rename_folder_with_links", { path, newName }));
+  }
+
+  async moveFolderWithLinks(path: string, newParent: string | null): Promise<LinkUpdateReport> {
+    return toReport(await call<ReportDto>("move_folder_with_links", { path, newParent }));
   }
 
   getSetting(key: string): Promise<string | null> {

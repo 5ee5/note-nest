@@ -13,7 +13,10 @@ export interface NoteSummary {
   path: string;
   /** Folder path relative to the vault root; empty string for the vault root. */
   folder: string;
+  /** All tags: the frontmatter `tags:` list first, then tags that appear only inline (#tag). */
   tags: string[];
+  /** The subset of `tags` that exist only as #tag in the text (not removable from the UI). */
+  inlineTags: string[];
   pinned: boolean;
   archived: boolean;
   preview: string;
@@ -67,6 +70,105 @@ export interface Attachment {
   markdownPath: string;
 }
 
+/** A fragment of text; `matched` parts are what the search found. */
+export interface SnippetPart {
+  text: string;
+  matched: boolean;
+}
+
+export interface SearchHit {
+  id: string;
+  title: string;
+  path: string;
+  archived: boolean;
+  titleParts: SnippetPart[];
+  snippet: SnippetPart[];
+}
+
+/** A tag with the number of notes using it (nested tags roll up into their parents). */
+export interface TagCount {
+  name: string;
+  count: number;
+}
+
+export interface NoteRef {
+  id: string;
+  title: string;
+  path: string;
+}
+
+/** A link in another note that points at this one. */
+export interface Backlink {
+  source: NoteRef;
+  line: number;
+  context: string;
+  targetText: string;
+  display: string | null;
+}
+
+/** A link written in a note; `target` is null when it points at nothing. */
+export interface OutgoingLink {
+  targetText: string;
+  display: string | null;
+  line: number;
+  context: string;
+  target: NoteRef | null;
+}
+
+export interface BrokenLink {
+  source: NoteRef;
+  targetText: string;
+  line: number;
+  context: string;
+}
+
+export interface RelatedNote {
+  note: NoteRef;
+  sharedTags: number;
+  linked: boolean;
+}
+
+export interface NoteLinks {
+  backlinks: Backlink[];
+  outgoing: OutgoingLink[];
+  related: RelatedNote[];
+}
+
+export interface GraphNode {
+  id: string;
+  title: string;
+  path: string;
+  archived: boolean;
+  /** Number of distinct notes this one is linked to or from. */
+  degree: number;
+}
+
+export interface Graph {
+  nodes: GraphNode[];
+  /** Directed [from, to] note ids. */
+  edges: [string, string][];
+  /** Notes in the whole vault (a local graph shows only some). */
+  totalNotes: number;
+}
+
+/** A note whose links would be (or were) rewritten by a rename or move. */
+export interface AffectedNote {
+  note: NoteRef;
+  links: number;
+}
+
+export interface LinkUpdateReport {
+  updated: AffectedNote[];
+  skipped: { note: NoteRef; reason: string }[];
+  /** Where the originals were copied before being changed (relative to the vault). */
+  backupDir: string | null;
+}
+
+export interface RenameOutcome {
+  note: NoteSummary;
+  links: LinkUpdateReport;
+}
+
 export interface NotesApi {
   /** True for sample data that is never written to disk. */
   readonly isSample: boolean;
@@ -106,6 +208,28 @@ export interface NotesApi {
     data: Uint8Array,
     suggestedName?: string | null,
   ): Promise<Attachment>;
+
+  searchNotes(query: string, limit?: number): Promise<SearchHit[]>;
+  listTags(): Promise<TagCount[]>;
+  getNoteLinks(id: string): Promise<NoteLinks>;
+  getGraph(center?: string | null, depth?: number): Promise<Graph>;
+  listOrphans(): Promise<NoteRef[]>;
+  listBrokenLinks(): Promise<BrokenLink[]>;
+  /** Which note a `[[target]]` written in note `sourceId` points at, if any. */
+  resolveLink(sourceId: string, target: string): Promise<NoteRef | null>;
+  /** Replaces the frontmatter tags list; inline #tags in the text are untouched. */
+  setTags(id: string, tags: string[]): Promise<NoteSummary>;
+
+  /** Notes whose links would be rewritten by the operation (empty = nothing to confirm). */
+  previewRenameNote(id: string, title: string): Promise<AffectedNote[]>;
+  previewMoveNote(id: string, folder: string | null): Promise<AffectedNote[]>;
+  previewRenameFolder(path: string, newName: string): Promise<AffectedNote[]>;
+  previewMoveFolder(path: string, newParent: string | null): Promise<AffectedNote[]>;
+  /** Like renameNote/moveNote/renameFolder/moveFolder, and also fixes links that stopped resolving. */
+  renameNoteWithLinks(id: string, title: string): Promise<RenameOutcome>;
+  moveNoteWithLinks(id: string, folder: string | null): Promise<RenameOutcome>;
+  renameFolderWithLinks(path: string, newName: string): Promise<LinkUpdateReport>;
+  moveFolderWithLinks(path: string, newParent: string | null): Promise<LinkUpdateReport>;
 
   getSetting(key: string): Promise<string | null>;
   setSetting(key: string, value: string): Promise<void>;

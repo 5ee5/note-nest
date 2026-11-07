@@ -1,6 +1,32 @@
 import { ApiError } from "./errors";
+import {
+  affected,
+  applyEdits,
+  brokenLinks,
+  graph as buildGraph,
+  linkKey,
+  MockResolver,
+  noteLinks,
+  orphans as findOrphans,
+  planLinkUpdates,
+  search as searchIndex,
+  setFrontmatterTags,
+  tagCounts,
+  tagsOf,
+  type KNote,
+  type PlannedEdit,
+} from "./mockKnowledge";
 import type {
+  AffectedNote,
   Attachment,
+  BrokenLink,
+  Graph,
+  LinkUpdateReport,
+  NoteLinks,
+  NoteRef,
+  RenameOutcome,
+  SearchHit,
+  TagCount,
   Draft,
   NoteDoc,
   NoteSummary,
@@ -34,6 +60,8 @@ const iso = (daysAgo: number, hour = 10): string => {
 interface Stored {
   note: NoteSummary;
   content: string;
+  /** Tags that exist regardless of the content (sample data). */
+  seedTags: string[];
 }
 
 interface Trashed {
@@ -103,6 +131,7 @@ export class MockNotesApi implements NotesApi {
       path,
       folder,
       tags: [],
+      inlineTags: [],
       pinned: false,
       archived: false,
       preview: previewOf(content),
@@ -111,8 +140,10 @@ export class MockNotesApi implements NotesApi {
       lastOpenedAt: null,
       ...over,
     };
-    this.notes.set(note.id, { note, content });
-    return note;
+    const stored: Stored = { note, content, seedTags: over.tags ?? [] };
+    this.notes.set(note.id, stored);
+    this.refreshTags(stored);
+    return stored.note;
   }
 
   private ensureFolder(folder: string): void {
@@ -204,6 +235,7 @@ export class MockNotesApi implements NotesApi {
       preview: previewOf(content),
       updatedAt: new Date().toISOString(),
     };
+    this.refreshTags(s);
     return Promise.resolve({ note: { ...s.note }, content, contentHash: mockHash(content) });
   }
 
@@ -451,6 +483,177 @@ export class MockNotesApi implements NotesApi {
       vaultPath: `Attachments/${name}`,
       markdownPath: `${"../".repeat(depth)}Attachments/${name}`,
     };
+  }
+
+  // ------------------------------------------------------------- knowledge
+
+  /** Recomputes a note's tags from its content (and sample tags). */
+  private refreshTags(s: Stored): void {
+    const { tags, inline } = tagsOf(this.knote(s));
+    s.note = { ...s.note, tags, inlineTags: inline };
+  }
+
+  private knote(s: Stored): KNote {
+    return {
+      id: s.note.id,
+      path: s.note.path,
+      title: s.note.title,
+      content: s.content,
+      archived: s.note.archived,
+      seedTags: s.seedTags,
+    };
+  }
+
+  private knowledge(): KNote[] {
+    return [...this.notes.values()].map((s) => this.knote(s));
+  }
+
+  async searchNotes(query: string, limit = 50): Promise<SearchHit[]> {
+    return searchIndex(this.knowledge(), query, limit);
+  }
+
+  async listTags(): Promise<TagCount[]> {
+    return tagCounts(this.knowledge());
+  }
+
+  async getNoteLinks(id: string): Promise<NoteLinks> {
+    return noteLinks(this.knowledge(), id);
+  }
+
+  async getGraph(center: string | null = null, depth = 1): Promise<Graph> {
+    return buildGraph(this.knowledge(), center, depth);
+  }
+
+  async listOrphans(): Promise<NoteRef[]> {
+    return findOrphans(this.knowledge());
+  }
+
+  async listBrokenLinks(): Promise<BrokenLink[]> {
+    return brokenLinks(this.knowledge());
+  }
+
+  async resolveLink(sourceId: string, target: string): Promise<NoteRef | null> {
+    const notes = this.knowledge();
+    const source = notes.find((n) => n.id === sourceId);
+    if (!source) return null;
+    const hit = new MockResolver(notes).resolve(source.path, linkKey(target));
+    return hit ? { id: hit.id, title: hit.title, path: hit.path } : null;
+  }
+
+  async setTags(id: string, tags: string[]): Promise<NoteSummary> {
+    const s = this.get(id);
+    s.seedTags = [];
+    s.content = setFrontmatterTags(s.content, tags);
+    s.note = { ...s.note, updatedAt: new Date().toISOString() };
+    this.refreshTags(s);
+    return { ...s.note };
+  }
+
+  private noteMoves(id: string, newPath: string) {
+    return new Map([[id, { path: newPath, title: parts(newPath).title }]]);
+  }
+
+  private folderMoves(from: string, to: string) {
+    const moves = new Map<string, { path: string; title: string }>();
+    for (const s of this.notes.values()) {
+      const p = s.note.path;
+      if (p.startsWith(`${from}/`)) {
+        const path = `${to}${p.slice(from.length)}`;
+        moves.set(s.note.id, { path, title: parts(path).title });
+      }
+    }
+    return moves;
+  }
+
+  private newNotePath(id: string, title: string): string {
+    validName(title);
+    const { folder } = this.get(id).note;
+    return `${folder ? `${folder}/` : ""}${title}.md`;
+  }
+
+  private movedNotePath(id: string, folder: string | null): string {
+    if (folder && !this.folders.has(folder)) throw new ApiError("not_found", `folder ${folder}`);
+    return `${folder ? `${folder}/` : ""}${this.get(id).note.title}.md`;
+  }
+
+  private affectedBy(moves: Map<string, { path: string; title: string }>): AffectedNote[] {
+    const notes = this.knowledge();
+    return affected(notes, planLinkUpdates(notes, moves));
+  }
+
+  async previewRenameNote(id: string, title: string): Promise<AffectedNote[]> {
+    return this.affectedBy(this.noteMoves(id, this.newNotePath(id, title)));
+  }
+
+  async previewMoveNote(id: string, folder: string | null): Promise<AffectedNote[]> {
+    return this.affectedBy(this.noteMoves(id, this.movedNotePath(id, folder)));
+  }
+
+  async previewRenameFolder(path: string, newName: string): Promise<AffectedNote[]> {
+    validName(newName);
+    const { folder } = parts(path);
+    return this.affectedBy(this.folderMoves(path, `${folder ? `${folder}/` : ""}${newName}`));
+  }
+
+  async previewMoveFolder(path: string, newParent: string | null): Promise<AffectedNote[]> {
+    const name = path.slice(path.lastIndexOf("/") + 1);
+    return this.affectedBy(this.folderMoves(path, `${newParent ? `${newParent}/` : ""}${name}`));
+  }
+
+  /** Applies planned link edits to the notes' contents and reports what happened. */
+  private applyPlan(plan: Map<string, PlannedEdit[]>): LinkUpdateReport {
+    const report: LinkUpdateReport = { updated: [], skipped: [], backupDir: null };
+    for (const [id, edits] of plan) {
+      const s = this.notes.get(id);
+      if (!s) continue;
+      const { text, applied } = applyEdits(s.content, edits);
+      const note = { id, title: s.note.title, path: s.note.path };
+      if (applied > 0) {
+        s.content = text;
+        s.note = { ...s.note, preview: previewOf(text), updatedAt: new Date().toISOString() };
+        this.refreshTags(s);
+        report.updated.push({ note, links: applied });
+        report.backupDir = ".notenest/recovery/link-updates/mock";
+      }
+      if (applied < edits.length) {
+        report.skipped.push({
+          note,
+          reason: `${edits.length - applied} link(s) were left unchanged`,
+        });
+      }
+    }
+    return report;
+  }
+
+  private planFor(moves: Map<string, { path: string; title: string }>) {
+    return planLinkUpdates(this.knowledge(), moves);
+  }
+
+  async renameNoteWithLinks(id: string, title: string): Promise<RenameOutcome> {
+    const plan = this.planFor(this.noteMoves(id, this.newNotePath(id, title)));
+    const note = await this.renameNote(id, title);
+    return { note, links: this.applyPlan(plan) };
+  }
+
+  async moveNoteWithLinks(id: string, folder: string | null): Promise<RenameOutcome> {
+    const plan = this.planFor(this.noteMoves(id, this.movedNotePath(id, folder)));
+    const note = await this.moveNote(id, folder);
+    return { note, links: this.applyPlan(plan) };
+  }
+
+  async renameFolderWithLinks(path: string, newName: string): Promise<LinkUpdateReport> {
+    validName(newName);
+    const { folder } = parts(path);
+    const plan = this.planFor(this.folderMoves(path, `${folder ? `${folder}/` : ""}${newName}`));
+    await this.renameFolder(path, newName);
+    return this.applyPlan(plan);
+  }
+
+  async moveFolderWithLinks(path: string, newParent: string | null): Promise<LinkUpdateReport> {
+    const name = path.slice(path.lastIndexOf("/") + 1);
+    const plan = this.planFor(this.folderMoves(path, `${newParent ? `${newParent}/` : ""}${name}`));
+    await this.moveFolder(path, newParent);
+    return this.applyPlan(plan);
   }
 
   async getSetting(key: string): Promise<string | null> {

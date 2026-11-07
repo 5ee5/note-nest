@@ -8,6 +8,7 @@ const note = (id: string, over: Partial<NoteSummary> = {}): NoteSummary => ({
   path: `${id}.md`,
   folder: "",
   tags: [],
+  inlineTags: [],
   pinned: false,
   archived: false,
   preview: "",

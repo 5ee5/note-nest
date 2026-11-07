@@ -76,6 +76,81 @@ describe("TauriNotesApi", () => {
     expect(out).toEqual({ html: "<p>x</p>", warnings: ["w"] });
   });
 
+  it("lists tags from both sources", async () => {
+    invoke.mockResolvedValueOnce([{ ...record, tags: ["a"], inline_tags: ["b"] }]);
+    const [note] = await new TauriNotesApi().listNotes();
+    expect(note).toMatchObject({ tags: ["a", "b"], inlineTags: ["b"] });
+  });
+
+  it("maps search hits, links and the graph to camelCase", async () => {
+    const api = new TauriNotesApi();
+    invoke.mockResolvedValueOnce([
+      {
+        id: "i",
+        title: "T",
+        path: "T.md",
+        archived: false,
+        title_parts: [{ text: "T", matched: true }],
+        snippet: [],
+      },
+    ]);
+    const hits = await api.searchNotes("t", 5);
+    expect(invoke).toHaveBeenLastCalledWith("search_notes", { query: "t", limit: 5 }, undefined);
+    expect(hits[0]).toMatchObject({ titleParts: [{ text: "T", matched: true }] });
+
+    const ref = { id: "x", title: "X", path: "X.md" };
+    invoke.mockResolvedValueOnce({
+      backlinks: [{ source: ref, line: 2, context: "c", target_text: "T", display: null }],
+      outgoing: [{ target_text: "Y", display: "y", line: 1, context: "c", target: null }],
+      related: [{ note: ref, shared_tags: 2, linked: true }],
+    });
+    expect(await api.getNoteLinks("i")).toEqual({
+      backlinks: [{ source: ref, line: 2, context: "c", targetText: "T", display: null }],
+      outgoing: [{ targetText: "Y", display: "y", line: 1, context: "c", target: null }],
+      related: [{ note: ref, sharedTags: 2, linked: true }],
+    });
+
+    invoke.mockResolvedValueOnce({ nodes: [], edges: [["a", "b"]], total_notes: 7 });
+    expect(await api.getGraph("c", 2)).toEqual({ nodes: [], edges: [["a", "b"]], totalNotes: 7 });
+    expect(invoke).toHaveBeenLastCalledWith("graph", { center: "c", depth: 2 }, undefined);
+  });
+
+  it("calls the link-updating commands with the arguments Rust expects", async () => {
+    const api = new TauriNotesApi();
+    invoke.mockResolvedValueOnce([]);
+    await api.previewRenameNote("i", "New");
+    expect(invoke).toHaveBeenLastCalledWith(
+      "preview_rename_note",
+      { id: "i", newTitle: "New" },
+      undefined,
+    );
+
+    invoke.mockResolvedValueOnce({
+      record,
+      links: { updated: [], skipped: [], backup_dir: ".notenest/recovery/link-updates/1" },
+    });
+    const out = await api.renameNoteWithLinks("i", "New");
+    expect(invoke).toHaveBeenLastCalledWith(
+      "rename_note_with_links",
+      { id: "i", newTitle: "New" },
+      undefined,
+    );
+    expect(out.links.backupDir).toBe(".notenest/recovery/link-updates/1");
+    expect(out.note.title).toBe("Rust");
+
+    invoke.mockResolvedValueOnce({ updated: [], skipped: [], backup_dir: null });
+    expect((await api.moveFolderWithLinks("A", null)).backupDir).toBeNull();
+    expect(invoke).toHaveBeenLastCalledWith(
+      "move_folder_with_links",
+      { path: "A", newParent: null },
+      undefined,
+    );
+
+    invoke.mockResolvedValueOnce(record);
+    await api.setTags("i", ["a"]);
+    expect(invoke).toHaveBeenLastCalledWith("set_tags", { id: "i", tags: ["a"] }, undefined);
+  });
+
   it("turns Tauri rejections into ApiError with a code", async () => {
     invoke.mockRejectedValueOnce({ code: "conflict", message: "changed on disk" });
     await expect(new TauriNotesApi().readNote("id")).rejects.toMatchObject({
