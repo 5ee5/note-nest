@@ -120,8 +120,8 @@ function BrokenList() {
             <div className="truncate text-xs text-fg-muted">{links[0]!.source.path}</div>
           </button>
           <ul className="mt-1 space-y-0.5">
-            {links.map((l) => (
-              <li key={`${l.line}:${l.targetText}`} className="text-xs text-fg-muted">
+            {links.map((l, i) => (
+              <li key={`${i}:${l.line}:${l.targetText}`} className="text-xs text-fg-muted">
                 <span className="text-fg">[[{l.targetText}]]</span> on line {l.line}
               </li>
             ))}

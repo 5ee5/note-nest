@@ -10,6 +10,7 @@ import { imageHandlers } from "./images";
 import { frontmatterFolding, frontmatterIdGuard } from "./frontmatter";
 import { detectLineBreak } from "./text";
 import { editorHighlighting, editorTheme } from "./theme";
+import { wikiLinkExtensions, type WikiLinkOptions } from "./wikilinks";
 
 /** Notes larger than this are edited as plain text (the Markdown parser would slow typing). */
 export const MAX_HIGHLIGHT_CHARS = 8_000_000;
@@ -50,6 +51,8 @@ export interface EditorOptions {
   onSave: () => void;
   /** Called once if the note switched to plain text because it is too large or unbroken. */
   onPlainMode?: () => void;
+  /** Wiki-link support: highlighting, following, completion. */
+  wikiLinks?: WikiLinkOptions;
   /** Extra extensions (formatting keymap, update listener, ...). */
   extensions?: Extension[];
 }
@@ -85,6 +88,7 @@ export function createEditorState(doc: string, options: EditorOptions): EditorSt
       frontmatterFolding,
       frontmatterIdGuard,
       imageHandlers,
+      ...(options.wikiLinks ? [wikiLinkExtensions(options.wikiLinks)] : []),
       search({ top: true }),
       keymap.of(formatKeymap),
       keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, ...foldKeymap]),

@@ -3,12 +3,17 @@ import { EditorView } from "@codemirror/view";
 import { undoDepth, redoDepth } from "@codemirror/commands";
 import type { EditorState } from "@codemirror/state";
 import { textStats } from "../lib/stats";
+import { followLink } from "../lib/actions";
+import { useEditor } from "../store/editor";
 import { useEditorView } from "../store/editorView";
+import { useLinks } from "../store/links";
+import { useNotes } from "../store/notes";
 import { useUi } from "../store/ui";
 import { activeFormats } from "./editor/format";
 import { foldFrontmatter, findFrontmatter } from "./editor/frontmatter";
 import { createEditorState } from "./editor/state";
 import { docText, External, syncDocument } from "./editor/text";
+import { setBrokenTargets } from "./editor/wikilinks";
 
 /** Selections beyond this size are not counted (it would cost more than it helps). */
 const MAX_COUNTED_SELECTION = 500_000;
@@ -60,6 +65,11 @@ export default function MarkdownEditor({ value, onChange, onSave, onView }: Prop
   useEffect(() => {
     const state = createEditorState(initial, {
       onSave: () => callbacks.current.onSave(),
+      wikiLinks: {
+        onFollow: (target) => void followLink(target),
+        getNotes: () => useNotes.getState().notes,
+        getTags: () => useNotes.getState().tagCounts.map((t) => t.name),
+      },
       onPlainMode: () =>
         useUi
           .getState()
@@ -83,10 +93,22 @@ export default function MarkdownEditor({ value, onChange, onSave, onView }: Prop
     // A note with nothing but its properties is new: let the user start typing.
     const fm = findFrontmatter(view.state.doc);
     if (initial.trim() === "" || (fm && fm.after >= view.state.doc.length)) view.focus();
+    // Style links that point at nothing, using what the links panel already knows.
+    const syncBroken = () => {
+      const links = useLinks.getState();
+      const current = links.noteId !== null && links.noteId === useEditor.getState().noteId;
+      const targets = current
+        ? (links.data?.outgoing ?? []).filter((o) => !o.target).map((o) => o.targetText)
+        : [];
+      view.dispatch({ effects: setBrokenTargets.of(new Set(targets)) });
+    };
+    syncBroken();
+    const unsubscribeLinks = useLinks.subscribe(syncBroken);
     callbacks.current.onView?.(view);
     useEditorView.getState().setView(view);
     publishState(view.state);
     return () => {
+      unsubscribeLinks();
       useEditorView.getState().setView(null);
       callbacks.current.onView?.(null);
       view.destroy();

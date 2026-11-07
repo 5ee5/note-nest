@@ -53,6 +53,28 @@ export const editorTheme = EditorView.theme({
     borderRadius: "0.375rem",
     color: "var(--fg)",
   },
+  ".cm-wikilink": {
+    color: "var(--accent)",
+    textDecoration: "underline dotted",
+    textUnderlineOffset: "3px",
+    cursor: "pointer",
+  },
+  ".cm-wikilink-broken": { color: "var(--fg-muted)", textDecorationColor: "#d97706" },
+  ".cm-tooltip": {
+    backgroundColor: "var(--bg)",
+    border: "1px solid var(--border)",
+    borderRadius: "0.5rem",
+    color: "var(--fg)",
+    overflow: "hidden",
+  },
+  ".cm-tooltip.cm-tooltip-autocomplete > ul": { fontFamily: "var(--font-sans)", maxHeight: "14em" },
+  ".cm-tooltip.cm-tooltip-autocomplete > ul > li": { padding: "0.25rem 0.75rem" },
+  ".cm-tooltip-autocomplete ul li[aria-selected]": {
+    backgroundColor: "var(--surface-active)",
+    color: "var(--fg)",
+  },
+  ".cm-completionDetail": { color: "var(--fg-muted)", marginLeft: "0.75em", fontStyle: "normal" },
+  ".cm-completionMatchedText": { textDecoration: "none", fontWeight: "700" },
   ".cm-searchMatch": { backgroundColor: "var(--selection)", outline: "1px solid var(--ring)" },
   ".cm-searchMatch.cm-searchMatch-selected": { backgroundColor: "var(--surface-active)" },
 });

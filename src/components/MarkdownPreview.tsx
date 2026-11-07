@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { toApiError } from "../lib/api";
+import { followPreviewLink } from "../lib/actions";
 import { openExternal } from "../lib/openExternal";
 import { useNotes } from "../store/notes";
 
@@ -66,6 +67,7 @@ export function MarkdownPreview({ noteId, content }: Props) {
     if (!anchor) return;
     e.preventDefault(); // the webview must never navigate away from the app
     const href = anchor.getAttribute("href") ?? "";
+    if (followPreviewLink(href, anchor.getAttribute("title"))) return;
     void openExternal(href);
   };
 

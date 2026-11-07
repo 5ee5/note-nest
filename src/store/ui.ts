@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { applyTheme, loadTheme, saveTheme, type Theme } from "../lib/theme";
+import type { AffectedNote } from "../lib/api";
 import type { SortKey, View } from "../lib/notes";
 
 /** Edit only, edit and preview side by side, or preview only. */
@@ -24,6 +25,15 @@ export interface PromptRequest {
   onSubmit: (value: string) => Promise<void> | void;
 }
 
+export type LinkChoice = "update" | "keep" | "cancel";
+
+/** Asks whether links in other notes should follow a rename (see `askLinkUpdate`). */
+export interface LinkUpdateRequest {
+  heading: string;
+  affected: AffectedNote[];
+  resolve: (choice: LinkChoice) => void;
+}
+
 interface UiState {
   theme: Theme;
   editorMode: EditorMode;
@@ -37,6 +47,7 @@ interface UiState {
   settingsOpen: boolean;
   notices: Notice[];
   prompt: PromptRequest | null;
+  linkUpdate: LinkUpdateRequest | null;
   /** Incremented to ask the explorer to focus its search box. */
   searchFocusTick: number;
 
@@ -55,6 +66,8 @@ interface UiState {
   dismissNotice: (id: number) => void;
   openPrompt: (prompt: PromptRequest) => void;
   closePrompt: () => void;
+  openLinkUpdate: (request: LinkUpdateRequest) => void;
+  closeLinkUpdate: () => void;
 }
 
 let noticeCounter = 0;
@@ -72,6 +85,7 @@ export const useUi = create<UiState>((set) => ({
   settingsOpen: false,
   notices: [],
   prompt: null,
+  linkUpdate: null,
   searchFocusTick: 0,
 
   setTheme: (theme) => {
@@ -95,4 +109,6 @@ export const useUi = create<UiState>((set) => ({
   dismissNotice: (id) => set((s) => ({ notices: s.notices.filter((n) => n.id !== id) })),
   openPrompt: (prompt) => set({ prompt }),
   closePrompt: () => set({ prompt: null }),
+  openLinkUpdate: (linkUpdate) => set({ linkUpdate }),
+  closeLinkUpdate: () => set({ linkUpdate: null }),
 }));

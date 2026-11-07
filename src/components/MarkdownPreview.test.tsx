@@ -5,6 +5,11 @@ import { ApiError } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { LARGE_PREVIEW_CHARS, MarkdownPreview, PREVIEW_DEBOUNCE_MS } from "./MarkdownPreview";
 
+const followPreviewLink = vi.fn();
+vi.mock("../lib/actions", () => ({
+  followPreviewLink: (...args: unknown[]) => followPreviewLink(...args),
+}));
+
 const openExternal = vi.fn();
 vi.mock("../lib/openExternal", () => ({ openExternal: (u: string) => openExternal(u) }));
 
@@ -13,6 +18,7 @@ let api: MockNotesApi;
 beforeEach(() => {
   vi.useFakeTimers();
   openExternal.mockReset();
+  followPreviewLink.mockReset();
   api = new MockNotesApi({ sample: false });
   useNotes.setState({ api });
 });
@@ -101,6 +107,27 @@ describe("MarkdownPreview", () => {
       "Other.md",
       "#top",
     ]);
+  });
+
+  it("routes note links to the app and never to the system opener", async () => {
+    vi.spyOn(api, "renderMarkdown").mockResolvedValue({
+      html: '<p><a href="#nn-note=11111111-1111-4111-8111-111111111111">note</a> <a href="#nn-missing" title="Note not found: Gone">gone</a> <a href="https://example.com">web</a></p>',
+      warnings: [],
+    });
+    followPreviewLink.mockImplementation((href: string) => href.startsWith("#nn-"));
+    render(<MarkdownPreview noteId="n" content="x" />);
+    await settle();
+    for (const name of ["note", "gone", "web"]) {
+      const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+      screen.getByText(name).dispatchEvent(click);
+      expect(click.defaultPrevented).toBe(true);
+    }
+    expect(followPreviewLink.mock.calls.map((c) => [c[0], c[1]])).toEqual([
+      ["#nn-note=11111111-1111-4111-8111-111111111111", null],
+      ["#nn-missing", "Note not found: Gone"],
+      ["https://example.com", null],
+    ]);
+    expect(openExternal.mock.calls.map((c) => c[0])).toEqual(["https://example.com"]);
   });
 
   it("renders large notes only on request", async () => {

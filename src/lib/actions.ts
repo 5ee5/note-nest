@@ -2,13 +2,13 @@ import { toApiError } from "./api";
 import { localDateString } from "./api/mock";
 import type { Theme } from "./theme";
 import type { EditorMode } from "../store/ui";
-import type { Draft, NoteSummary } from "./api";
+import type { AffectedNote, Draft, LinkUpdateReport, NoteSummary } from "./api";
 import { altText, isImageFile, MAX_ATTACHMENT_BYTES } from "./images";
 import { normalizeTag } from "./tags";
 import { useEditor } from "../store/editor";
 import { useRecovery } from "../store/recovery";
 import { useNotes } from "../store/notes";
-import { useUi } from "../store/ui";
+import { useUi, type LinkChoice } from "../store/ui";
 
 /**
  * User-facing operations shared by shortcuts, the command palette and the UI.
@@ -74,11 +74,66 @@ async function withEditorSettled(fn: () => Promise<void>): Promise<void> {
   await useNotes.getState().load();
 }
 
+/** Shows the "update links?" dialog and waits for the user's choice. */
+function askLinkUpdate(heading: string, affected: AffectedNote[]): Promise<LinkChoice> {
+  return new Promise((resolve) => {
+    ui().openLinkUpdate({
+      heading,
+      affected,
+      resolve: (choice) => {
+        ui().closeLinkUpdate();
+        resolve(choice);
+      },
+    });
+  });
+}
+
+/** Tells the user what a link update did, including anything it did not touch. */
+function reportLinkUpdate(report: LinkUpdateReport): void {
+  const notes = report.updated.length;
+  if (notes > 0) {
+    const links = report.updated.reduce((n, u) => n + u.links, 0);
+    const backup = report.backupDir ? ` Originals were backed up in ${report.backupDir}.` : "";
+    ui().notify(
+      "info",
+      `Updated ${links} link${links === 1 ? "" : "s"} in ${notes} note${notes === 1 ? "" : "s"}.${backup}`,
+    );
+  }
+  if (report.skipped.length > 0) {
+    ui().notify(
+      "warning",
+      `Some links were not updated: ${report.skipped.map((s) => `${s.note.title} (${s.reason})`).join("; ")}`,
+    );
+  }
+}
+
+/**
+ * Renames a note. If other notes link to it by a name that would stop working, asks
+ * whether to update those links first; cancelling leaves everything as it was.
+ */
 export async function renameNote(id: string, title: string): Promise<boolean> {
+  let affected: AffectedNote[] = [];
+  const checked = await attempt("Could not rename the note", async () => {
+    affected = await api().previewRenameNote(id, title);
+    return true;
+  });
+  if (!checked) return false;
+  let choice: LinkChoice = "keep";
+  if (affected.length > 0) {
+    choice = await askLinkUpdate(`Rename to “${title}”`, affected);
+    if (choice === "cancel") return false;
+  }
   let ok = false;
   await attempt("Could not rename the note", () =>
     withEditorSettled(async () => {
-      const note = await api().renameNote(id, title);
+      let note: NoteSummary;
+      if (choice === "update") {
+        const outcome = await api().renameNoteWithLinks(id, title);
+        note = outcome.note;
+        reportLinkUpdate(outcome.links);
+      } else {
+        note = await api().renameNote(id, title);
+      }
       ok = true;
       if (ui().selectedNoteId === id) {
         ui().selectNote(note.id);
@@ -149,10 +204,22 @@ async function afterFolderChange(): Promise<void> {
 }
 
 export async function renameFolder(path: string, newName: string): Promise<boolean> {
+  let affected: AffectedNote[] = [];
+  const checked = await attempt("Could not rename the folder", async () => {
+    affected = await api().previewRenameFolder(path, newName);
+    return true;
+  });
+  if (!checked) return false;
+  let choice: LinkChoice = "keep";
+  if (affected.length > 0) {
+    choice = await askLinkUpdate(`Rename folder to “${newName}”`, affected);
+    if (choice === "cancel") return false;
+  }
   let ok = false;
   await attempt("Could not rename the folder", async () => {
     await useEditor.getState().flush();
-    await api().renameFolder(path, newName);
+    if (choice === "update") reportLinkUpdate(await api().renameFolderWithLinks(path, newName));
+    else await api().renameFolder(path, newName);
     ok = true;
     const view = ui().view;
     if (view.kind === "folder" && (view.value === path || view.value.startsWith(`${path}/`))) {
@@ -306,4 +373,57 @@ export async function removeTag(note: NoteSummary, tag: string): Promise<boolean
 export function searchFor(query: string): void {
   ui().setQuery(query);
   ui().focusSearch();
+}
+
+// ----------------------------------------------------------------- wiki links
+
+/** Creates a note with the given title (in `folder` if it exists) and opens it. */
+async function createNoteWithTitle(folder: string | null, title: string): Promise<void> {
+  const parent = folder && useNotes.getState().folders.includes(folder) ? folder : null;
+  const note = await attempt("Could not create the note", () => api().createNote(parent, title));
+  if (!note) return;
+  await useNotes.getState().load();
+  await openNote(note.id);
+}
+
+/** Asks whether to create the note a broken `[[link]]` points at. */
+export function offerCreateNote(target: string): void {
+  const base = (target.split(/[#^]/)[0] ?? "").trim().replace(/\.md$/i, "");
+  const parts = base.split("/").filter(Boolean);
+  const title = parts.pop() ?? "";
+  if (title === "") return;
+  const sourceId = useEditor.getState().noteId;
+  const source = useNotes.getState().notes.find((n) => n.id === sourceId);
+  const folder = parts.length > 0 ? parts.join("/") : (source?.folder ?? "") || null;
+  ui().openPrompt({
+    title: "Create note",
+    label: "Note title",
+    initial: title,
+    confirmLabel: "Create",
+    onSubmit: (t) => createNoteWithTitle(folder, t),
+  });
+}
+
+/** Opens the note a `[[link]]` in the open note points at, or offers to create it. */
+export async function followLink(target: string): Promise<void> {
+  const sourceId = useEditor.getState().noteId;
+  if (!sourceId) return;
+  const hit = await attempt("Could not follow the link", () => api().resolveLink(sourceId, target));
+  if (hit === undefined) return;
+  if (hit) await openNote(hit.id);
+  else offerCreateNote(target);
+}
+
+/** A click on a link inside the rendered preview (`#nn-note=<id>` / `#nn-missing`). Returns whether it was handled. */
+export function followPreviewLink(href: string, title: string | null): boolean {
+  const id = /^#nn-note=([0-9a-f-]{36})$/i.exec(href)?.[1];
+  if (id) {
+    void openNote(id);
+    return true;
+  }
+  if (href === "#nn-missing") {
+    offerCreateNote((title ?? "").replace(/^Note not found: /, ""));
+    return true;
+  }
+  return false;
 }

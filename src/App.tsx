@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { isTauri } from "./lib/api";
 import { AppLayout } from "./components/AppLayout";
 import { CommandPalette } from "./components/CommandPalette";
+import { LinkUpdateDialog } from "./components/LinkUpdateDialog";
 import { Notices } from "./components/Notices";
 import { PromptDialog } from "./components/PromptDialog";
 import { RecoveryDialog } from "./components/RecoveryDialog";
@@ -32,6 +33,7 @@ export default function App() {
         <CommandPalette />
         <SettingsDialog />
         <PromptDialog />
+        <LinkUpdateDialog />
         <RecoveryDialog />
       </VaultGate>
       <Notices />

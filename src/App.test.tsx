@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import App from "./App";
 import { MockNotesApi } from "./lib/api/mock";
 import { useEditor } from "./store/editor";
+import { useLinks } from "./store/links";
 import { useNotes } from "./store/notes";
 import { useRecovery } from "./store/recovery";
 import { useUi } from "./store/ui";
@@ -55,8 +56,10 @@ afterEach(() => {
     view: { kind: "all" },
     notices: [],
     prompt: null,
+    linkUpdate: null,
     editorMode: "edit",
   });
+  useLinks.setState({ noteId: null, data: null, error: null, open: false, tab: "backlinks" });
 });
 
 describe("App shell", () => {
@@ -137,6 +140,8 @@ describe("notes", () => {
     const title = (await screen.findByLabelText("Note title")) as HTMLInputElement;
     await user.clear(title);
     await user.type(title, "Kernel{Enter}");
+    // Rust links to Linux, so the app asks what to do with that link first.
+    await user.click(await screen.findByRole("button", { name: "Update links" }));
     await waitFor(() =>
       expect(useNotes.getState().notes.some((n) => n.path === "Programming/Kernel.md")).toBe(true),
     );
@@ -252,6 +257,115 @@ describe("knowledge", () => {
     const broken = await screen.findByLabelText("Broken links", { selector: "ul" });
     expect(within(broken).getByText("Dangling")).toBeTruthy();
     expect(within(broken).getByText("[[Missing Note]]")).toBeTruthy();
+  });
+});
+
+describe("links", () => {
+  it("shows backlinks, links and related notes for the open note", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByText("Rust"));
+    const panel = await screen.findByLabelText("Note connections");
+    await waitFor(() => expect(panel.textContent).toContain("1 backlink · 2 links"));
+
+    await user.click(within(panel).getByRole("button", { name: /1 backlink/ }));
+    const backlinks = within(panel).getByLabelText("Backlinks");
+    expect(within(backlinks).getByText("CodeBuddy")).toBeTruthy();
+    expect(within(backlinks).getByText(/Built with \[\[Rust\]\]/)).toBeTruthy();
+
+    await user.click(within(panel).getByRole("tab", { name: /^Links/ }));
+    const links = within(panel).getByLabelText("Links in this note");
+    expect(within(links).getByText("Linux", { exact: false })).toBeTruthy();
+
+    await user.click(within(panel).getByRole("tab", { name: /^Related/ }));
+    expect(
+      within(within(panel).getByLabelText("Related notes")).getByText("CodeBuddy"),
+    ).toBeTruthy();
+  });
+
+  it("offers to create the note a broken link points at", async () => {
+    const user = userEvent.setup();
+    const extra = await api.createNote(null, "Dangling");
+    await api.saveNote(extra.id, "points at [[Missing Note]]", { overwrite: true });
+    render(<App />);
+    await user.click(await screen.findByText("Dangling"));
+    const panel = await screen.findByLabelText("Note connections");
+    await waitFor(() => expect(panel.textContent).toContain("1 broken"));
+    await user.click(within(panel).getByRole("button", { name: /1 backlinks?|0 backlinks/ }));
+    await user.click(within(panel).getByRole("tab", { name: /^Links/ }));
+    await user.click(within(panel).getByRole("button", { name: "Create" }));
+
+    const dialog = await screen.findByRole("dialog");
+    const title = within(dialog).getByLabelText("Note title") as HTMLInputElement;
+    expect(title.value).toBe("Missing Note");
+    await user.click(within(dialog).getByRole("button", { name: "Create" }));
+    await waitFor(async () =>
+      expect((await api.listNotes()).some((n) => n.title === "Missing Note")).toBe(true),
+    );
+  });
+});
+
+describe("renaming a linked note", () => {
+  const rename = async (user: ReturnType<typeof userEvent.setup>, to: string) => {
+    await user.click(await screen.findByText("Rust"));
+    const title = (await screen.findByLabelText("Note title")) as HTMLInputElement;
+    await user.clear(title);
+    await user.type(title, `${to}{Enter}`);
+    return screen.findByRole("dialog");
+  };
+  const codeBuddy = async () => {
+    const note = (await api.listNotes()).find((n) => n.title === "CodeBuddy")!;
+    return api.contentOf(note.id);
+  };
+
+  it("asks first, then updates the links in other notes", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    const dialog = await rename(user, "Rust Lang");
+    expect(within(dialog).getByText("CodeBuddy")).toBeTruthy();
+    expect(dialog.textContent).toMatch(/1 link in 1 other note would stop working/);
+    expect(await codeBuddy()).toContain("[[Rust]]"); // nothing changes before the answer
+
+    await user.click(within(dialog).getByRole("button", { name: "Update links" }));
+    await waitFor(async () => expect(await codeBuddy()).toContain("[[Rust Lang]]"));
+    expect(await screen.findByText(/Updated 1 link in 1 note/)).toBeTruthy();
+    expect((await api.listNotes()).some((n) => n.path === "Programming/Rust Lang.md")).toBe(true);
+  });
+
+  it("can rename without touching other notes", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    const dialog = await rename(user, "Rust Lang");
+    await user.click(within(dialog).getByRole("button", { name: "Rename only" }));
+    await waitFor(async () =>
+      expect((await api.listNotes()).some((n) => n.path === "Programming/Rust Lang.md")).toBe(true),
+    );
+    expect(await codeBuddy()).toContain("[[Rust]]");
+    expect((await api.listBrokenLinks()).length).toBe(1);
+  });
+
+  it("cancelling leaves everything as it was", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    const dialog = await rename(user, "Rust Lang");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect((await api.listNotes()).some((n) => n.path === "Programming/Rust.md")).toBe(true);
+    expect(await codeBuddy()).toContain("[[Rust]]");
+    expect(((await screen.findByLabelText("Note title")) as HTMLInputElement).value).toBe("Rust");
+  });
+
+  it("renames silently when nothing links to the note", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByText("ideas"));
+    const title = (await screen.findByLabelText("Note title")) as HTMLInputElement;
+    await user.clear(title);
+    await user.type(title, "thoughts{Enter}");
+    await waitFor(async () =>
+      expect((await api.listNotes()).some((n) => n.path === "Inbox/thoughts.md")).toBe(true),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
 

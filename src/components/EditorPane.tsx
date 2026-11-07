@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import {
   Archive,
   ArchiveRestore,
@@ -23,9 +23,11 @@ import {
 import { modLabel } from "../lib/shortcuts";
 import { cn } from "../lib/cn";
 import { useEditor, type SaveStatus } from "../store/editor";
+import { useLinks } from "../store/links";
 import { useNotes } from "../store/notes";
 import { useUi, type EditorMode } from "../store/ui";
 import { EditorStatusBar } from "./EditorStatusBar";
+import { LinksPanel } from "./LinksPanel";
 import { TagBar } from "./TagBar";
 import { MarkdownPreview } from "./MarkdownPreview";
 
@@ -115,6 +117,12 @@ export function EditorPane() {
   const flush = useEditor((s) => s.flush);
   const note = notes.find((n) => n.id === (noteId ?? selectedNoteId)) ?? null;
   const mod = modLabel();
+
+  // Keep the connections panel current: reload when the note changes or the index updates.
+  useEffect(() => {
+    const timer = setTimeout(() => void useLinks.getState().refresh(noteId), noteId ? 250 : 0);
+    return () => clearTimeout(timer);
+  }, [noteId, notes]);
 
   return (
     <main aria-label="Editor" className="flex h-full flex-col bg-bg">
@@ -264,6 +272,7 @@ export function EditorPane() {
               </div>
             )}
           </div>
+          <LinksPanel />
           <EditorStatusBar content={content} />
         </div>
       ) : (
