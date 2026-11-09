@@ -219,6 +219,27 @@ impl Database {
             .collect()
     }
 
+    /// Just what resolving a link needs (source, its path, the target key), in the same
+    /// order as [`Database::all_links`]. Skips the text columns, which dominate the cost of
+    /// loading a large vault's links when only the graph shape matters.
+    async fn link_keys(&self) -> Result<Vec<(Uuid, String, String)>> {
+        sqlx::query(
+            "SELECT l.source_note_id, s.path, l.target_key \
+             FROM note_links l JOIN notes s ON s.id = l.source_note_id ORDER BY s.path, l.line, l.id",
+        )
+        .fetch_all(self.pool())
+        .await?
+        .iter()
+        .map(|r| {
+            Ok((
+                parse_id(&r.try_get::<String, _>("source_note_id")?)?,
+                r.try_get("path")?,
+                r.try_get("target_key")?,
+            ))
+        })
+        .collect()
+    }
+
     async fn all_links(&self) -> Result<Vec<LinkRow>> {
         sqlx::query(
             "SELECT l.source_note_id, s.path, l.target_key, l.target_text, l.display, l.line, l.context \
@@ -396,10 +417,10 @@ impl Database {
         let resolver = self.resolver().await?;
         let mut seen = HashSet::new();
         let mut edges = Vec::new();
-        for l in self.all_links().await? {
-            if let Some(c) = resolver.resolve(&l.source_path, &l.key) {
-                if c.id != l.source && seen.insert((l.source, c.id)) {
-                    edges.push((l.source, c.id));
+        for (source, source_path, key) in self.link_keys().await? {
+            if let Some(c) = resolver.resolve(&source_path, &key) {
+                if c.id != source && seen.insert((source, c.id)) {
+                    edges.push((source, c.id));
                 }
             }
         }
