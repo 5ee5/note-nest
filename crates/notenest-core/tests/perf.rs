@@ -176,13 +176,17 @@ async fn large_vault_performance() {
         g.nodes.len(),
         g.edges.len()
     );
-    let t = Instant::now();
-    let _ = ws.graph(Some(mid), 2).await.unwrap();
-    println!(
-        "{:<44} {:>9.1} ms",
-        "local graph (depth 2)",
-        t.elapsed().as_secs_f64() * 1000.0
-    );
+    for depth in [1, 2] {
+        let t = Instant::now();
+        let g = ws.graph(Some(mid), depth).await.unwrap();
+        println!(
+            "{:<44} {:>9.1} ms  ({} nodes, {} edges)",
+            format!("local graph (depth {depth})"),
+            t.elapsed().as_secs_f64() * 1000.0,
+            g.nodes.len(),
+            g.edges.len()
+        );
+    }
     let t = Instant::now();
     let o = ws.orphans().await.unwrap();
     println!(

@@ -4,7 +4,7 @@
 //! Links are stored as target *keys* and matched against `note_keys` here, so the
 //! answer is always current. A key can match several notes; [`Resolver`] picks one.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use sqlx::Row;
@@ -129,6 +129,43 @@ fn parse_id(s: &str) -> Result<Uuid> {
         context: "note id".into(),
         message: e.to_string(),
     })
+}
+
+/// Most values bound to one `IN (...)` list; SQLite caps the number of variables.
+const IN_CHUNK: usize = 500;
+
+fn in_list(n: usize) -> String {
+    vec!["?"; n].join(",")
+}
+
+/// `(link id, source id, source path, line, target key)` for the links matching `filter`,
+/// which is an `IN` condition on `l.source_note_id` or `l.target_key` bound to `values`.
+async fn fetch_link_keys(
+    db: &Database,
+    filter: &str,
+    values: &[String],
+) -> Result<Vec<(i64, Uuid, String, i64, String)>> {
+    let sql = format!(
+        "SELECT l.id, l.source_note_id, s.path, l.line, l.target_key \
+         FROM note_links l JOIN notes s ON s.id = l.source_note_id WHERE {filter}"
+    );
+    let q = sqlx::query(&sql);
+    values
+        .iter()
+        .fold(q, |q, v| q.bind(v))
+        .fetch_all(db.pool())
+        .await?
+        .iter()
+        .map(|r| {
+            Ok((
+                r.try_get("id")?,
+                parse_id(&r.try_get::<String, _>("source_note_id")?)?,
+                r.try_get("path")?,
+                r.try_get("line")?,
+                r.try_get("target_key")?,
+            ))
+        })
+        .collect()
 }
 
 struct NoteRow {
@@ -430,6 +467,13 @@ impl Database {
     /// The link graph. With `center`, only notes within `depth` links of it (in either
     /// direction); otherwise every note.
     pub async fn graph(&self, center: Option<Uuid>, depth: usize) -> Result<Graph> {
+        match center {
+            Some(c) => self.local_graph(c, depth).await,
+            None => self.global_graph().await,
+        }
+    }
+
+    async fn global_graph(&self) -> Result<Graph> {
         let notes = self.all_notes().await?;
         let total_notes = notes.len();
         let edges = self.edges().await?;
@@ -438,25 +482,8 @@ impl Database {
             neighbours.entry(a).or_default().insert(b);
             neighbours.entry(b).or_default().insert(a);
         }
-        let keep: Option<HashSet<Uuid>> = center.map(|c| {
-            let mut seen = HashSet::from([c]);
-            let mut queue = VecDeque::from([(c, 0usize)]);
-            while let Some((n, d)) = queue.pop_front() {
-                if d >= depth {
-                    continue;
-                }
-                for &m in neighbours.get(&n).into_iter().flatten() {
-                    if seen.insert(m) {
-                        queue.push_back((m, d + 1));
-                    }
-                }
-            }
-            seen
-        });
-        let included = |id: &Uuid| keep.as_ref().is_none_or(|k| k.contains(id));
         let nodes = notes
             .into_iter()
-            .filter(|n| included(&n.id))
             .map(|n| GraphNode {
                 degree: neighbours.get(&n.id).map_or(0, HashSet::len),
                 id: n.id,
@@ -465,10 +492,130 @@ impl Database {
                 archived: n.archived,
             })
             .collect();
-        let edges = edges
+        Ok(Graph {
+            nodes,
+            edges,
+            total_notes,
+        })
+    }
+
+    /// The graph around `center`, built level by level from queries scoped to the notes
+    /// reached so far, so its cost follows the size of the neighbourhood, not the vault.
+    /// The result equals the global graph restricted to the notes within `depth` links
+    /// (a node's `degree` still counts all of its neighbours, kept or not).
+    async fn local_graph(&self, center: Uuid, depth: usize) -> Result<Graph> {
+        let resolver = self.resolver().await?;
+        let total_notes = usize::try_from(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM notes")
+                .fetch_one(self.pool())
+                .await?,
+        )
+        .unwrap_or(0);
+
+        let mut neighbours: HashMap<Uuid, HashSet<Uuid>> = HashMap::new();
+        // Link rows seen so far, keyed by link id so one found twice counts once.
+        let mut links: HashMap<i64, (String, i64, Uuid, Uuid)> = HashMap::new(); // path, line, source, target
+        let mut seen = HashSet::from([center]);
+        let mut frontier = vec![center];
+        for level in 0..=depth {
+            // Every link in or out of the frontier, resolved.
+            let ids: Vec<String> = frontier.iter().map(Uuid::to_string).collect();
+            let in_frontier: HashSet<Uuid> = frontier.iter().copied().collect();
+            let mut rows = Vec::new();
+            for chunk in ids.chunks(IN_CHUNK) {
+                rows.extend(
+                    fetch_link_keys(
+                        self,
+                        &format!("l.source_note_id IN ({})", in_list(chunk.len())),
+                        chunk,
+                    )
+                    .await?,
+                );
+                let keys_sql = format!(
+                    "SELECT DISTINCT key FROM note_keys WHERE note_id IN ({})",
+                    in_list(chunk.len())
+                );
+                let keys = sqlx::query_scalar::<_, String>(&keys_sql);
+                let keys = chunk
+                    .iter()
+                    .fold(keys, |q, id| q.bind(id))
+                    .fetch_all(self.pool())
+                    .await?;
+                for key_chunk in keys.chunks(IN_CHUNK) {
+                    rows.extend(
+                        fetch_link_keys(
+                            self,
+                            &format!("l.target_key IN ({})", in_list(key_chunk.len())),
+                            key_chunk,
+                        )
+                        .await?,
+                    );
+                }
+            }
+            for (link_id, source, source_path, line, key) in rows {
+                let Some(target) = resolver.resolve(&source_path, &key).map(|c| c.id) else {
+                    continue;
+                };
+                // Links that touch the frontier at neither end were fetched only because
+                // they share a key; they belong to some other part of the graph.
+                if target == source
+                    || !(in_frontier.contains(&source) || in_frontier.contains(&target))
+                {
+                    continue;
+                }
+                neighbours.entry(source).or_default().insert(target);
+                neighbours.entry(target).or_default().insert(source);
+                links.insert(link_id, (source_path, line, source, target));
+            }
+            if level == depth {
+                break;
+            }
+            let next: Vec<Uuid> = frontier
+                .iter()
+                .flat_map(|n| neighbours.get(n).into_iter().flatten().copied())
+                .filter(|m| seen.insert(*m))
+                .collect();
+            if next.is_empty() {
+                break;
+            }
+            frontier = next;
+        }
+
+        // Edges among the kept notes, in the same order as the global graph.
+        let mut ordered: Vec<_> = links.iter().collect();
+        ordered.sort_by(|a, b| (&a.1 .0, a.1 .1, a.0).cmp(&(&b.1 .0, b.1 .1, b.0)));
+        let mut edge_seen = HashSet::new();
+        let edges: Vec<(Uuid, Uuid)> = ordered
             .into_iter()
-            .filter(|(a, b)| included(a) && included(b))
+            .map(|(_, (_, _, s, t))| (*s, *t))
+            .filter(|(s, t)| seen.contains(s) && seen.contains(t) && edge_seen.insert((*s, *t)))
             .collect();
+
+        let kept: Vec<String> = seen.iter().map(Uuid::to_string).collect();
+        let mut nodes = Vec::new();
+        for chunk in kept.chunks(IN_CHUNK) {
+            let sql = format!(
+                "SELECT id, title, path, archived FROM notes WHERE id IN ({})",
+                in_list(chunk.len())
+            );
+            let q = sqlx::query(&sql);
+            for r in chunk
+                .iter()
+                .fold(q, |q, id| q.bind(id))
+                .fetch_all(self.pool())
+                .await?
+            {
+                let id = parse_id(&r.try_get::<String, _>("id")?)?;
+                nodes.push(GraphNode {
+                    degree: neighbours.get(&id).map_or(0, HashSet::len),
+                    id,
+                    title: r.try_get("title")?,
+                    path: r.try_get("path")?,
+                    archived: r.try_get::<i64, _>("archived")? != 0,
+                });
+            }
+        }
+        nodes.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(Graph {
             nodes,
             edges,
@@ -804,6 +951,72 @@ mod tests {
                 .all(|(a, b)| g.nodes.iter().any(|n| n.id == *a)
                     && g.nodes.iter().any(|n| n.id == *b))
         );
+    }
+
+    /// The scoped local graph must equal the global graph cut down to the same notes,
+    /// including ambiguous keys (same title in two folders), aliases, self links,
+    /// mutual links and links that stay unresolved.
+    #[tokio::test]
+    async fn local_graph_equals_the_global_graph_restricted_to_the_neighbourhood() {
+        let (_d, db) = db().await;
+        add(
+            &db,
+            "Hub.md",
+            "[[Leaf]] [[X/Dup]] [[Dup]] [[Hub]] [[nowhere]] [[Al]]",
+        )
+        .await;
+        add(&db, "Leaf.md", "back to [[Hub]] and [[Far]]").await;
+        add(&db, "Far.md", "[[Farther]]").await;
+        add(&db, "Farther.md", "[[Far]] [[Leaf]]").await;
+        add(&db, "X/Dup.md", "[[Hub]]").await;
+        add(&db, "Y/Dup.md", "[[Leaf]]").await;
+        add(&db, "Y/Src.md", "[[Dup]]").await;
+        add(&db, "Aliased.md", "---\naliases: [Al]\n---\n[[Y/Dup]]").await;
+        add(&db, "Island.md", "nothing").await;
+        let global = db.graph(None, 0).await.unwrap();
+        let degree = |id: Uuid| global.nodes.iter().find(|n| n.id == id).unwrap().degree;
+
+        let mut checked = 0;
+        for node in &global.nodes {
+            for depth in 0..=4 {
+                // Notes within `depth` links of the centre, by plain BFS over the global edges.
+                let mut keep = HashSet::from([node.id]);
+                let mut frontier = vec![node.id];
+                for _ in 0..depth {
+                    let mut next = Vec::new();
+                    for &(a, b) in &global.edges {
+                        for (x, y) in [(a, b), (b, a)] {
+                            if frontier.contains(&x) && keep.insert(y) {
+                                next.push(y);
+                            }
+                        }
+                    }
+                    frontier = next;
+                }
+                let local = db.graph(Some(node.id), depth).await.unwrap();
+                let mut got: Vec<_> = local.nodes.iter().map(|n| (n.id, n.degree)).collect();
+                let mut want: Vec<_> = keep.iter().map(|&i| (i, degree(i))).collect();
+                got.sort();
+                want.sort();
+                assert_eq!(got, want, "nodes from {} at depth {depth}", node.path);
+                let want_edges: Vec<_> = global
+                    .edges
+                    .iter()
+                    .filter(|(a, b)| keep.contains(a) && keep.contains(b))
+                    .copied()
+                    .collect();
+                assert_eq!(
+                    local.edges, want_edges,
+                    "edges from {} at depth {depth}",
+                    node.path
+                );
+                assert_eq!(local.total_notes, global.total_notes);
+                checked += 1;
+            }
+        }
+        assert_eq!(checked, 9 * 5);
+        let missing = db.graph(Some(Uuid::new_v4()), 2).await.unwrap();
+        assert!(missing.nodes.is_empty() && missing.edges.is_empty());
     }
 
     #[tokio::test]
