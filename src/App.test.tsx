@@ -443,3 +443,80 @@ describe("safety", () => {
     );
   });
 });
+
+describe("Graph view", () => {
+  it("opens from the sidebar and summarises the vault graph", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByLabelText("Sidebar");
+    await user.click(screen.getByRole("button", { name: "Graph" }));
+    const graph = await screen.findByRole("region", { name: "Graph" });
+    expect(
+      within(graph).getByRole("button", { name: "Whole vault" }).getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(
+      await within(graph).findByRole("img", { name: /Link graph with \d+ notes/ }),
+    ).toBeTruthy();
+    expect(within(graph).getByText(/\d+ notes, \d+ links/)).toBeTruthy();
+    expect(screen.queryByLabelText("Editor")).toBeNull();
+  });
+
+  it("is also reachable from the command palette", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByLabelText("Sidebar");
+    await user.keyboard("{Control>}k{/Control}");
+    await user.click(await screen.findByText("Go to Graph"));
+    expect(await screen.findByRole("region", { name: "Graph" })).toBeTruthy();
+  });
+
+  it("asks for a note when the local graph has nothing to centre on", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByLabelText("Sidebar");
+    await user.click(screen.getByRole("button", { name: "Graph" }));
+    const graph = await screen.findByRole("region", { name: "Graph" });
+    await user.click(within(graph).getByRole("button", { name: "Around this note" }));
+    expect(within(graph).getByText(/Open a note to see the notes around it/)).toBeTruthy();
+    await user.click(within(graph).getByRole("button", { name: "Show the whole vault" }));
+    expect(await within(graph).findByRole("img", { name: /Link graph/ })).toBeTruthy();
+  });
+
+  it("shows the graph around the selected note with a depth control", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByLabelText("Sidebar");
+    await waitFor(() => expect(useNotes.getState().notes.length).toBeGreaterThan(0));
+    const id = useNotes.getState().notes[0]!.id;
+    useUi.setState({ selectedNoteId: id });
+    await user.click(screen.getByRole("button", { name: "Graph" }));
+    const graph = await screen.findByRole("region", { name: "Graph" });
+    expect(
+      within(graph).getByRole("button", { name: "Around this note" }).getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(await within(graph).findByText(/\d+ of \d+ notes/)).toBeTruthy();
+    await user.click(within(graph).getByRole("button", { name: "3" }));
+    expect(within(graph).getByRole("button", { name: "3" }).getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+  });
+
+  it("will not draw a huge vault until asked", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByLabelText("Sidebar");
+    await user.click(screen.getByRole("button", { name: "Graph" }));
+    const graph = await screen.findByRole("region", { name: "Graph" });
+    const template = useNotes.getState().notes[0]!;
+    const many = Array.from({ length: 1501 }, (_, i) => ({
+      ...template,
+      id: `bulk-${i}`,
+      title: `Bulk ${i}`,
+    }));
+    useNotes.setState({ notes: many });
+    expect(await within(graph).findByText(/too many to draw at once/)).toBeTruthy();
+    expect(within(graph).queryByRole("img", { name: /Link graph/ })).toBeNull();
+    await user.click(within(graph).getByRole("button", { name: "Draw everything" }));
+    expect(await within(graph).findByRole("img", { name: /Link graph/ })).toBeTruthy();
+  });
+});

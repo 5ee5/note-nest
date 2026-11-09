@@ -5,6 +5,7 @@ export type View =
   | { kind: "favorites" }
   | { kind: "recent" }
   | { kind: "daily" }
+  | { kind: "graph" }
   | { kind: "archived" }
   | { kind: "trash" }
   | { kind: "orphans" }
@@ -23,6 +24,7 @@ export function isDailyNote(note: NoteSummary): boolean {
 export function viewLabel(view: View): string {
   switch (view.kind) {
     case "all":
+    case "graph": // the graph fills the editor area; the explorer lists every note beside it
       return "All notes";
     case "favorites":
       return "Favorites";
@@ -51,6 +53,7 @@ function inView(note: NoteSummary, view: View): boolean {
   if (note.archived) return false;
   switch (view.kind) {
     case "all":
+    case "graph":
       return true;
     case "trash":
     case "orphans":

@@ -152,6 +152,9 @@ export function CommandPalette() {
           <Command.Item className={itemClass} onSelect={go({ kind: "daily" })}>
             Go to Daily notes
           </Command.Item>
+          <Command.Item className={itemClass} onSelect={go({ kind: "graph" })}>
+            Go to Graph
+          </Command.Item>
           <Command.Item className={itemClass} onSelect={go({ kind: "orphans" })}>
             Go to Orphaned notes
           </Command.Item>

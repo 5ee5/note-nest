@@ -6,6 +6,7 @@ import {
   FolderPlus,
   Library,
   Link2Off,
+  Network,
   Pencil,
   Settings,
   Star,
@@ -108,6 +109,7 @@ export function Sidebar() {
         {row(<NavButton icon={Star} label="Favorites" view={{ kind: "favorites" }} />)}
         {row(<NavButton icon={Clock} label="Recently opened" view={{ kind: "recent" }} />)}
         {row(<NavButton icon={Calendar} label="Daily notes" view={{ kind: "daily" }} />)}
+        {row(<NavButton icon={Network} label="Graph" view={{ kind: "graph" }} />)}
 
         {hasTags && (
           <>

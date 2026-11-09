@@ -116,3 +116,26 @@ pinned to ~5.9 because typescript-eslint does not support TS 7.
 - Clipboard paste and file drop, the opener plugin, and the raw-body attachment call have been verified in
   Chromium and by compiling the Tauri crate, but not in the real desktop webviews (WebKitGTK, WebView2,
   WKWebView).
+
+## Milestone 4: graph view
+
+- **Favorites and recently opened** were built with the storage engine (the pin star, `last_opened_at`, and
+  the two sidebar views); Milestone 4 added nothing to them.
+- **Graph rendering:** `d3-force` (one small dependency) lays the graph out, run to completion up front rather
+  than animated, so the result is deterministic and unit-tested without a browser. A plain `<canvas>` draws
+  it, with pan, zoom, hover highlighting, click to select and double-click to open. No graph UI library.
+- **Placement:** the graph is a sidebar view (`{ kind: "graph" }`) that replaces the editor pane; the note
+  explorer stays beside it listing every note, and selecting a note there recentres the local graph.
+- **Two scopes:** "Around this note" (depth 1 to 3, backed by a neighbourhood query, so it stays fast in a
+  large vault) and "Whole vault". A vault of more than 1 500 notes is not drawn until the user asks
+  (`GRAPH_DRAW_LIMIT`), because 60 000 edges are unreadable and a 5 000-note layout blocks the page.
+- **Mutual links** are drawn as one line; there are no arrowheads.
+
+### Known limitations (graph view)
+
+- The canvas is not keyboard-navigable; it has a text label with the counts, and the explorer remains the
+  accessible way to reach every note. A fuller accessibility pass belongs to Milestone 5.
+- The layout is recomputed on every change to the note list, so editing a note while a very large graph is
+  open redraws it from scratch.
+- Verified in Chromium against the sample vault (6 notes); not yet looked at on a large, dense real vault or
+  in the desktop webviews.

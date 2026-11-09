@@ -5,6 +5,7 @@ import { useUi } from "../store/ui";
 import { Sidebar } from "./Sidebar";
 import { NoteExplorer } from "./NoteExplorer";
 import { EditorPane } from "./EditorPane";
+import { GraphView } from "./GraphView";
 
 function ResizeHandle({ label }: { label: string }) {
   return (
@@ -18,6 +19,7 @@ function ResizeHandle({ label }: { label: string }) {
 export function AppLayout() {
   const sidebarRef = usePanelRef();
   const explorerRef = usePanelRef();
+  const graphOpen = useUi((s) => s.view.kind === "graph");
   const sidebarCollapsed = useUi((s) => s.sidebarCollapsed);
   const explorerCollapsed = useUi((s) => s.explorerCollapsed);
   const setSidebarCollapsed = useUi((s) => s.setSidebarCollapsed);
@@ -77,7 +79,7 @@ export function AppLayout() {
       </Panel>
       <ResizeHandle label="Resize note explorer" />
       <Panel id="editor" minSize={320}>
-        <EditorPane />
+        {graphOpen ? <GraphView /> : <EditorPane />}
       </Panel>
     </Group>
   );
