@@ -129,55 +129,109 @@ impl Database {
             .await?;
         sqlx::query("DELETE FROM tags").execute(&mut *tx).await?;
         sqlx::query("DELETE FROM folders").execute(&mut *tx).await?;
-        for IndexEntry {
-            record: n,
-            extracted,
-        } in entries
-        {
-            let inserted = sqlx::query(&insert_note_sql())
-                .bind(n.id.to_string())
-                .bind(&n.path)
-                .bind(&n.title)
-                .bind(n.created_at.to_rfc3339())
-                .bind(n.updated_at.to_rfc3339())
-                .bind(&n.content_hash)
-                .bind(i64::from(n.pinned))
-                .bind(i64::from(n.archived))
-                .bind(n.last_opened_at.map(|t| t.to_rfc3339()))
-                .execute(&mut *tx)
-                .await?;
-            write_derived(
-                &mut tx,
-                n,
-                extracted,
-                true,
-                Some(inserted.last_insert_rowid()),
-            )
-            .await?;
+        for entry in entries {
+            insert_entry(&mut tx, entry).await?;
         }
-        let mut sorted: Vec<&String> = folders.iter().collect();
-        sorted.sort();
-        let mut ids = std::collections::HashMap::<&str, i64>::new();
-        for path in sorted {
-            let (parent, name) = match path.rsplit_once('/') {
-                Some((p, n)) => (ids.get(p).copied(), n),
-                None => (None, path.as_str()),
-            };
-            let row = sqlx::query(
-                "INSERT INTO folders (name, parent_id, path) VALUES (?1, ?2, ?3) RETURNING id",
-            )
-            .bind(name)
-            .bind(parent)
-            .bind(path)
-            .fetch_one(&mut *tx)
-            .await?;
-            ids.insert(path.as_str(), row.try_get("id")?);
-        }
+        insert_folders(&mut tx, folders).await?;
         tx.commit().await?;
         self.index_changed();
         Ok(())
     }
 
+    /// Brings the index in line with a scan of the vault without rebuilding it: deletes
+    /// the notes in `remove`, then (re)inserts `entries`, which the caller has reduced to
+    /// the notes that are new or differ from the index. Folders are rewritten only when
+    /// they changed. One transaction, so readers never see a half-updated index.
+    ///
+    /// A note in `entries` that already exists is deleted first (by id and by path) and
+    /// inserted again, so moves, swaps and content edits all go through one path.
+    pub async fn sync_index(
+        &self,
+        entries: &[IndexEntry],
+        remove: &[Uuid],
+        folders: &[String],
+    ) -> Result<()> {
+        let mut current = self.list_folders().await?;
+        let mut wanted: Vec<String> = folders.to_vec();
+        current.sort();
+        wanted.sort();
+        let folders_changed = current != wanted;
+        if entries.is_empty() && remove.is_empty() && !folders_changed {
+            return Ok(());
+        }
+
+        let mut tx = self.pool().begin().await?;
+        for id in remove {
+            delete_note_tx(&mut tx, &id.to_string()).await?;
+        }
+        for entry in entries {
+            delete_note_tx(&mut tx, &entry.record.id.to_string()).await?;
+            let at_path: Option<String> =
+                sqlx::query_scalar("SELECT id FROM notes WHERE path = ?1")
+                    .bind(&entry.record.path)
+                    .fetch_optional(&mut *tx)
+                    .await?;
+            if let Some(other) = at_path {
+                delete_note_tx(&mut tx, &other).await?;
+            }
+        }
+        for entry in entries {
+            insert_entry(&mut tx, entry).await?;
+        }
+        if folders_changed {
+            sqlx::query("DELETE FROM folders").execute(&mut *tx).await?;
+            insert_folders(&mut tx, folders).await?;
+        }
+        prune_tags(&mut tx).await?;
+        tx.commit().await?;
+        self.index_changed();
+        Ok(())
+    }
+}
+
+async fn insert_entry(tx: &mut sqlx::SqliteConnection, entry: &IndexEntry) -> Result<()> {
+    let IndexEntry {
+        record: n,
+        extracted,
+    } = entry;
+    let inserted = sqlx::query(&insert_note_sql())
+        .bind(n.id.to_string())
+        .bind(&n.path)
+        .bind(&n.title)
+        .bind(n.created_at.to_rfc3339())
+        .bind(n.updated_at.to_rfc3339())
+        .bind(&n.content_hash)
+        .bind(i64::from(n.pinned))
+        .bind(i64::from(n.archived))
+        .bind(n.last_opened_at.map(|t| t.to_rfc3339()))
+        .execute(&mut *tx)
+        .await?;
+    write_derived(tx, n, extracted, true, Some(inserted.last_insert_rowid())).await
+}
+
+async fn insert_folders(tx: &mut sqlx::SqliteConnection, folders: &[String]) -> Result<()> {
+    let mut sorted: Vec<&String> = folders.iter().collect();
+    sorted.sort();
+    let mut ids = std::collections::HashMap::<&str, i64>::new();
+    for path in sorted {
+        let (parent, name) = match path.rsplit_once('/') {
+            Some((p, n)) => (ids.get(p).copied(), n),
+            None => (None, path.as_str()),
+        };
+        let row = sqlx::query(
+            "INSERT INTO folders (name, parent_id, path) VALUES (?1, ?2, ?3) RETURNING id",
+        )
+        .bind(name)
+        .bind(parent)
+        .bind(path)
+        .fetch_one(&mut *tx)
+        .await?;
+        ids.insert(path.as_str(), row.try_get("id")?);
+    }
+    Ok(())
+}
+
+impl Database {
     /// Records a folder (and any missing ancestors) in the index.
     pub async fn ensure_folder(&self, path: &str) -> Result<()> {
         let mut tx = self.pool().begin().await?;

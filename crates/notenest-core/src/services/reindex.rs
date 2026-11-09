@@ -48,6 +48,20 @@ struct Scan {
     report: ReindexReport,
 }
 
+/// Bump when `extract` (or the derived tables) change what is stored for a note, so
+/// existing indexes are rebuilt in full once instead of trusting stale derived data.
+const EXTRACT_VERSION: &str = "1";
+const EXTRACT_VERSION_KEY: &str = "extract_version";
+
+/// True when the indexed row already reflects the scanned file. Everything derived is a
+/// function of the file content (hashed) and the path (title).
+fn same_note(old: &NoteRecord, new: &NoteRecord) -> bool {
+    old.path == new.path
+        && old.content_hash == new.content_hash
+        && old.pinned == new.pinned
+        && old.archived == new.archived
+}
+
 fn to_utc(t: std::io::Result<SystemTime>, fallback: DateTime<Utc>) -> DateTime<Utc> {
     t.map_or(fallback, DateTime::<Utc>::from)
 }
@@ -234,7 +248,31 @@ pub async fn reindex(vault: &Vault, db: &Database) -> Result<ReindexReport> {
             entry.record.last_opened_at = old.last_opened_at;
         }
     }
-    db.replace_index(&scanned.notes, &scanned.folders).await?;
+
+    // The derived data is only trustworthy if it was produced by the current extractor.
+    let current_version = db.get_setting(EXTRACT_VERSION_KEY).await?;
+    if current_version.as_deref() == Some(EXTRACT_VERSION) {
+        // Only touch what differs from the index; an unchanged vault writes nothing.
+        let scanned_ids: HashSet<Uuid> = scanned.notes.iter().map(|e| e.record.id).collect();
+        let remove: Vec<Uuid> = existing
+            .keys()
+            .filter(|id| !scanned_ids.contains(id))
+            .copied()
+            .collect();
+        let changed: Vec<IndexEntry> = scanned
+            .notes
+            .into_iter()
+            .filter(|e| {
+                existing
+                    .get(&e.record.id)
+                    .is_none_or(|old| !same_note(old, &e.record))
+            })
+            .collect();
+        db.sync_index(&changed, &remove, &scanned.folders).await?;
+    } else {
+        db.replace_index(&scanned.notes, &scanned.folders).await?;
+        db.set_setting(EXTRACT_VERSION_KEY, EXTRACT_VERSION).await?;
+    }
     Ok(scanned.report)
 }
 
@@ -377,5 +415,97 @@ mod tests {
             vault.read(&rel("latin.md")).unwrap(),
             vec![0x66, 0xe9, 0x6e]
         );
+    }
+
+    /// Index of the vault built from scratch in a separate database, as ground truth.
+    async fn fresh_snapshot(vault: &Vault) -> Vec<String> {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("fresh.db")).await.unwrap();
+        reindex(vault, &db).await.unwrap();
+        db.derived_snapshot().await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn incremental_reindex_matches_a_fresh_rebuild_after_external_changes() {
+        let (dir, vault, db) = setup().await;
+        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+        let md = |id: Uuid, body: &str| format!("---\nid: {id}\n---\n{body}");
+        vault.create_dir(&rel("Sub")).unwrap();
+        vault
+            .create_new(&rel("a.md"), md(a, "alpha #one [[b]]").as_bytes())
+            .unwrap();
+        vault
+            .create_new(&rel("b.md"), md(b, "beta #two [[a]]").as_bytes())
+            .unwrap();
+        vault.create_new(&rel("keep.md"), b"keep #one").unwrap();
+        vault.create_new(&rel("gone.md"), b"gone #only").unwrap();
+        vault.create_new(&rel("Sub/old.md"), b"old").unwrap();
+
+        reindex(&vault, &db).await.unwrap();
+        // Nothing changed: the index must come out identical.
+        let before = db.derived_snapshot().await.unwrap();
+        reindex(&vault, &db).await.unwrap();
+        assert_eq!(db.derived_snapshot().await.unwrap(), before);
+
+        // External edits: change content, delete, add, swap two notes' paths, new folder.
+        let root = dir.path();
+        fs::write(root.join("keep.md"), "keep #three [[a]]").unwrap();
+        fs::remove_file(root.join("gone.md")).unwrap();
+        fs::write(root.join("new.md"), "new #one").unwrap();
+        fs::rename(root.join("a.md"), root.join("tmp.md")).unwrap();
+        fs::rename(root.join("b.md"), root.join("a.md")).unwrap();
+        fs::rename(root.join("tmp.md"), root.join("b.md")).unwrap();
+        fs::rename(root.join("Sub/old.md"), root.join("moved.md")).unwrap();
+        fs::remove_dir(root.join("Sub")).unwrap();
+        fs::create_dir(root.join("Fresh")).unwrap();
+
+        let report = reindex(&vault, &db).await.unwrap();
+        assert_eq!(report.notes, 5);
+        assert_eq!(
+            db.derived_snapshot().await.unwrap(),
+            fresh_snapshot(&vault).await
+        );
+        assert_eq!(db.list_folders().await.unwrap(), vec!["Fresh"]);
+        // The swapped notes kept their ids at their new paths.
+        assert_eq!(db.get_note(a).await.unwrap().unwrap().path, "b.md");
+        assert_eq!(db.get_note(b).await.unwrap().unwrap().path, "a.md");
+    }
+
+    #[tokio::test]
+    async fn incremental_reindex_keeps_created_and_last_opened() {
+        let (_d, vault, db) = setup().await;
+        vault.create_new(&rel("n.md"), b"n").unwrap();
+        reindex(&vault, &db).await.unwrap();
+        let note = db.list_notes().await.unwrap().remove(0);
+        let at = Utc::now();
+        db.set_last_opened(note.id, at).await.unwrap();
+        vault.write(&rel("n.md"), b"n changed").unwrap();
+        reindex(&vault, &db).await.unwrap();
+        let after = db.list_notes().await.unwrap().remove(0);
+        assert_eq!(after.created_at, note.created_at);
+        assert_eq!(
+            after.last_opened_at.map(|t| t.timestamp()),
+            Some(at.timestamp())
+        );
+        assert_ne!(after.content_hash, note.content_hash);
+    }
+
+    #[tokio::test]
+    async fn an_index_from_an_older_extractor_is_rebuilt_in_full() {
+        let (_d, vault, db) = setup().await;
+        vault.create_new(&rel("n.md"), b"hello #tag").unwrap();
+        reindex(&vault, &db).await.unwrap();
+        // Simulate stale derived data from an older extractor, then a version bump.
+        sqlx::query("DELETE FROM note_tags")
+            .execute(db.pool())
+            .await
+            .unwrap();
+        db.set_setting(EXTRACT_VERSION_KEY, "0").await.unwrap();
+        reindex(&vault, &db).await.unwrap();
+        let tags: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM note_tags")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        assert_eq!(tags, 1);
     }
 }
