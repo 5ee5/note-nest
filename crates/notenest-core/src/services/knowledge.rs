@@ -53,11 +53,7 @@ impl Workspace {
     /// # Errors
     /// [`crate::Error::Database`] on failure.
     pub async fn note_links(&self, id: Uuid) -> Result<NoteLinks> {
-        Ok(NoteLinks {
-            backlinks: self.db.backlinks(id).await?,
-            outgoing: self.db.outgoing(id).await?,
-            related: self.db.related(id, RELATED_LIMIT).await?,
-        })
+        self.db.note_links(id, RELATED_LIMIT).await
     }
 
     /// The link graph: the whole vault, or notes within `depth` links of `center`.

@@ -12,6 +12,8 @@ pub use knowledge::MAX_INDEXED_BODY_BYTES;
 pub use links::{Candidate, CapturedLink, Resolver};
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
@@ -19,10 +21,17 @@ use sqlx::SqlitePool;
 
 use crate::{Error, Result};
 
+/// The resolver together with the index generation it was built for.
+type ResolverCache = Arc<Mutex<Option<(u64, Arc<Resolver>)>>>;
+
 /// Handle to the SQLite index. Cheap to clone.
 #[derive(Debug, Clone)]
 pub struct Database {
     pool: SqlitePool,
+    /// Bumped after every committed change to the index; invalidates the resolver cache.
+    generation: Arc<AtomicU64>,
+    /// The link resolver, rebuilt only when the index changed since it was built.
+    resolver_cache: ResolverCache,
 }
 
 /// Result of [`Database::open_recovering`].
@@ -53,7 +62,11 @@ impl Database {
             .connect_with(options)
             .await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
-        let db = Self { pool };
+        let db = Self {
+            pool,
+            generation: Arc::new(AtomicU64::new(0)),
+            resolver_cache: Arc::new(Mutex::new(None)),
+        };
         db.check_integrity().await?;
         Ok(db)
     }
@@ -124,6 +137,29 @@ impl Database {
 
     pub(crate) fn pool(&self) -> &SqlitePool {
         &self.pool
+    }
+
+    /// Call after committing a change to notes, keys or links.
+    pub(crate) fn index_changed(&self) {
+        self.generation.fetch_add(1, Ordering::SeqCst);
+    }
+
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn cached_resolver(&self, generation: u64) -> Option<Arc<Resolver>> {
+        let guard = self.resolver_cache.lock().ok()?;
+        guard
+            .as_ref()
+            .filter(|(g, _)| *g == generation)
+            .map(|(_, r)| Arc::clone(r))
+    }
+
+    pub(crate) fn store_resolver(&self, generation: u64, resolver: Arc<Resolver>) {
+        if let Ok(mut guard) = self.resolver_cache.lock() {
+            *guard = Some((generation, resolver));
+        }
     }
 }
 

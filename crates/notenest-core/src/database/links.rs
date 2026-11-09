@@ -5,6 +5,7 @@
 //! answer is always current. A key can match several notes; [`Resolver`] picks one.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 
 use sqlx::Row;
 use uuid::Uuid;
@@ -142,14 +143,26 @@ struct LinkRow {
     source_path: String,
     key: String,
     target_text: String,
-    display: Option<String>,
     line: usize,
     context: String,
 }
 
 impl Database {
-    /// Loads every note key into memory (one query) for resolving many links quickly.
-    pub async fn resolver(&self) -> Result<Resolver> {
+    /// Every note key in memory, for resolving many links quickly. Built once and reused
+    /// until the index next changes.
+    pub async fn resolver(&self) -> Result<Arc<Resolver>> {
+        // Read the generation before querying: a write that lands meanwhile makes the
+        // stored copy stale, and the next call then rebuilds it.
+        let generation = self.generation();
+        if let Some(cached) = self.cached_resolver(generation) {
+            return Ok(cached);
+        }
+        let resolver = Arc::new(self.load_resolver().await?);
+        self.store_resolver(generation, Arc::clone(&resolver));
+        Ok(resolver)
+    }
+
+    async fn load_resolver(&self) -> Result<Resolver> {
         let rows = sqlx::query(
             "SELECT k.key, k.kind, n.id, n.title, n.path FROM note_keys k JOIN notes n ON n.id = k.note_id",
         )
@@ -220,7 +233,6 @@ impl Database {
                 source_path: r.try_get("path")?,
                 key: r.try_get("target_key")?,
                 target_text: r.try_get("target_text")?,
-                display: r.try_get("display")?,
                 line: usize::try_from(r.try_get::<i64, _>("line")?).unwrap_or(0),
                 context: r.try_get("context")?,
             })
@@ -255,6 +267,10 @@ impl Database {
     /// Links in other notes that resolve to `id`, in path and line order.
     pub async fn backlinks(&self, id: Uuid) -> Result<Vec<Backlink>> {
         let resolver = self.resolver().await?;
+        self.backlinks_with(id, &resolver).await
+    }
+
+    async fn backlinks_with(&self, id: Uuid, resolver: &Resolver) -> Result<Vec<Backlink>> {
         let rows = sqlx::query(
             "SELECT l.source_note_id, s.title, s.path, l.target_key, l.target_text, l.display, l.line, l.context \
              FROM note_links l JOIN notes s ON s.id = l.source_note_id \
@@ -290,24 +306,59 @@ impl Database {
     /// Links written in note `id`, each resolved (or marked broken).
     pub async fn outgoing(&self, id: Uuid) -> Result<Vec<OutgoingLink>> {
         let resolver = self.resolver().await?;
-        let links: Vec<LinkRow> = self
-            .all_links()
-            .await?
-            .into_iter()
-            .filter(|l| l.source == id)
+        self.outgoing_with(id, &resolver).await
+    }
+
+    async fn outgoing_with(&self, id: Uuid, resolver: &Resolver) -> Result<Vec<OutgoingLink>> {
+        let rows = sqlx::query(
+            "SELECT s.path, l.target_key, l.target_text, l.display, l.line, l.context \
+             FROM note_links l JOIN notes s ON s.id = l.source_note_id \
+             WHERE l.source_note_id = ?1 ORDER BY l.line, l.id",
+        )
+        .bind(id.to_string())
+        .fetch_all(self.pool())
+        .await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            let path: String = r.try_get("path")?;
+            let key: String = r.try_get("target_key")?;
+            out.push(OutgoingLink {
+                target: resolver.resolve(&path, &key).map(Candidate::note_ref),
+                target_text: r.try_get("target_text")?,
+                display: r.try_get("display")?,
+                line: usize::try_from(r.try_get::<i64, _>("line")?).unwrap_or(0),
+                context: r.try_get("context")?,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Backlinks, outgoing links and related notes of a note, computed together from one
+    /// resolver and without loading every link in the vault.
+    pub async fn note_links(
+        &self,
+        id: Uuid,
+        related_limit: usize,
+    ) -> Result<crate::models::NoteLinks> {
+        let resolver = self.resolver().await?;
+        let backlinks = self.backlinks_with(id, &resolver).await?;
+        let outgoing = self.outgoing_with(id, &resolver).await?;
+        let linked: HashSet<Uuid> = backlinks
+            .iter()
+            .map(|b| b.source.id)
+            .chain(
+                outgoing
+                    .iter()
+                    .filter_map(|o| o.target.as_ref().map(|t| t.id)),
+            )
+            .filter(|n| *n != id)
             .collect();
-        Ok(links
-            .into_iter()
-            .map(|l| OutgoingLink {
-                target: resolver
-                    .resolve(&l.source_path, &l.key)
-                    .map(Candidate::note_ref),
-                target_text: l.target_text,
-                display: l.display,
-                line: l.line,
-                context: l.context,
-            })
-            .collect())
+        let related = self.related_with(id, related_limit, &linked).await?;
+        Ok(crate::models::NoteLinks {
+            backlinks,
+            outgoing,
+            related,
+        })
     }
 
     /// Links that point at no note.
@@ -426,6 +477,29 @@ impl Database {
     /// Notes related to `id`: linked either way (strongest), sharing tags, or in the same
     /// folder. Best first; archived notes excluded.
     pub async fn related(&self, id: Uuid, limit: usize) -> Result<Vec<RelatedNote>> {
+        let resolver = self.resolver().await?;
+        let mut linked: HashSet<Uuid> = self
+            .backlinks_with(id, &resolver)
+            .await?
+            .iter()
+            .map(|b| b.source.id)
+            .collect();
+        linked.extend(
+            self.outgoing_with(id, &resolver)
+                .await?
+                .iter()
+                .filter_map(|o| o.target.as_ref().map(|t| t.id)),
+        );
+        linked.remove(&id);
+        self.related_with(id, limit, &linked).await
+    }
+
+    async fn related_with(
+        &self,
+        id: Uuid,
+        limit: usize,
+        linked: &HashSet<Uuid>,
+    ) -> Result<Vec<RelatedNote>> {
         let notes = self.all_notes().await?;
         let Some(me) = notes.iter().find(|n| n.id == id) else {
             return Ok(Vec::new());
@@ -447,20 +521,6 @@ impl Database {
                 usize::try_from(r.try_get::<i64, _>("shared")?).unwrap_or(0),
             );
         }
-        let linked: HashSet<Uuid> = self
-            .edges()
-            .await?
-            .into_iter()
-            .filter_map(|(a, b)| {
-                if a == id {
-                    Some(b)
-                } else if b == id {
-                    Some(a)
-                } else {
-                    None
-                }
-            })
-            .collect();
 
         let mut scored: Vec<(usize, RelatedNote)> = notes
             .iter()

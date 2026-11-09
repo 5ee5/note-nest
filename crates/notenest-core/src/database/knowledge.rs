@@ -27,19 +27,46 @@ pub(crate) fn path_key(path: &str) -> String {
     lower.strip_suffix(".md").unwrap_or(&lower).to_owned()
 }
 
+/// Appends `(?, ?, ...)` groups for `rows` rows of `width` parameters, numbered from `first`.
+fn placeholders(rows: usize, width: usize, first: usize) -> String {
+    (0..rows)
+        .map(|r| {
+            let params = (0..width)
+                .map(|c| format!("?{}", first + r * width + c))
+                .collect::<Vec<_>>();
+            format!("({})", params.join(", "))
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Most rows sent in one multi-row INSERT (well below SQLite's parameter limit).
+const BATCH_ROWS: usize = 100;
+
 /// Replaces everything derived for note `n`. The note row must already exist.
-/// With `fresh` set, the note is known to have no derived rows yet (bulk reindex).
+///
+/// `rowid` is the note's `rowid` when the caller already knows it (a row just inserted);
+/// otherwise it is looked up. With `fresh` set, the note is known to have no derived rows
+/// yet (bulk reindex), so nothing needs clearing. Rows are written in a handful of
+/// multi-row statements: each statement costs a round trip to the database worker, so
+/// fewer statements make reindexing a large vault several times faster.
 pub(super) async fn write_derived(
     conn: &mut SqliteConnection,
     n: &NoteRecord,
     x: &Extracted,
     fresh: bool,
+    rowid: Option<i64>,
 ) -> Result<()> {
     let id = n.id.to_string();
-    let rowid: i64 = sqlx::query_scalar("SELECT rowid FROM notes WHERE id = ?1")
-        .bind(&id)
-        .fetch_one(&mut *conn)
-        .await?;
+    let rowid = match rowid {
+        Some(r) => r,
+        None => {
+            sqlx::query_scalar("SELECT rowid FROM notes WHERE id = ?1")
+                .bind(&id)
+                .fetch_one(&mut *conn)
+                .await?
+        }
+    };
 
     if !fresh {
         for sql in [
@@ -56,33 +83,51 @@ pub(super) async fn write_derived(
             .await?;
     }
 
-    let tagged = x
-        .frontmatter_tags
-        .iter()
-        .map(|t| (t, "frontmatter"))
-        .chain(x.inline_tags.iter().map(|t| (t, "inline")));
-    for (name, source) in tagged {
-        sqlx::query("INSERT OR IGNORE INTO tags (name) VALUES (?1)")
-            .bind(name)
-            .execute(&mut *conn)
-            .await?;
-        sqlx::query(
-            "INSERT OR IGNORE INTO note_tags (note_id, tag_id, source) \
-             SELECT ?1, id, ?3 FROM tags WHERE name = ?2",
-        )
-        .bind(&id)
-        .bind(name)
-        .bind(source)
-        .execute(&mut *conn)
-        .await?;
+    // Tags: make sure the names exist, then link the note to them (one statement per source).
+    let all_tags: Vec<&String> = x.frontmatter_tags.iter().chain(&x.inline_tags).collect();
+    if !all_tags.is_empty() {
+        let sql = format!(
+            "INSERT OR IGNORE INTO tags (name) VALUES {}",
+            placeholders(all_tags.len(), 1, 1)
+        );
+        let mut q = sqlx::query(&sql);
+        for t in &all_tags {
+            q = q.bind(t.as_str());
+        }
+        q.execute(&mut *conn).await?;
+        for (names, source) in [
+            (&x.frontmatter_tags, "frontmatter"),
+            (&x.inline_tags, "inline"),
+        ] {
+            if names.is_empty() {
+                continue;
+            }
+            let marks = (0..names.len())
+                .map(|i| format!("?{}", i + 3))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = format!(
+                "INSERT OR IGNORE INTO note_tags (note_id, tag_id, source) \
+                 SELECT ?1, id, ?2 FROM tags WHERE name IN ({marks})"
+            );
+            let mut q = sqlx::query(&sql).bind(&id).bind(source);
+            for t in names {
+                q = q.bind(t.as_str());
+            }
+            q.execute(&mut *conn).await?;
+        }
     }
 
-    for alias in &x.aliases {
-        sqlx::query("INSERT OR IGNORE INTO note_aliases (note_id, alias) VALUES (?1, ?2)")
-            .bind(&id)
-            .bind(alias)
-            .execute(&mut *conn)
-            .await?;
+    if !x.aliases.is_empty() {
+        let sql = format!(
+            "INSERT OR IGNORE INTO note_aliases (note_id, alias) VALUES {}",
+            placeholders(x.aliases.len(), 2, 1)
+        );
+        let mut q = sqlx::query(&sql);
+        for a in &x.aliases {
+            q = q.bind(&id).bind(a.as_str());
+        }
+        q.execute(&mut *conn).await?;
     }
 
     // A path key only counts as a path match when it is path-qualified; a root-level
@@ -90,38 +135,42 @@ pub(super) async fn write_derived(
     // Insertion order is the precedence when keys coincide: path, then title, then alias.
     let pk = path_key(&n.path);
     let pk_kind = if pk.contains('/') { "path" } else { "title" };
-    let keys = std::iter::once((pk, pk_kind))
+    let keys: Vec<(String, &str)> = std::iter::once((pk, pk_kind))
         .chain(std::iter::once((n.title.to_lowercase(), "title")))
-        .chain(x.aliases.iter().map(|a| (a.trim().to_lowercase(), "alias")));
-    for (key, kind) in keys.filter(|(k, _)| !k.is_empty()) {
-        sqlx::query("INSERT OR IGNORE INTO note_keys (key, note_id, kind) VALUES (?1, ?2, ?3)")
-            .bind(key)
-            .bind(&id)
-            .bind(kind)
-            .execute(&mut *conn)
-            .await?;
+        .chain(x.aliases.iter().map(|a| (a.trim().to_lowercase(), "alias")))
+        .filter(|(k, _)| !k.is_empty())
+        .collect();
+    let sql = format!(
+        "INSERT OR IGNORE INTO note_keys (key, note_id, kind) VALUES {}",
+        placeholders(keys.len(), 3, 1)
+    );
+    let mut q = sqlx::query(&sql);
+    for (key, kind) in &keys {
+        q = q.bind(key.as_str()).bind(&id).bind(*kind);
+    }
+    q.execute(&mut *conn).await?;
+
+    for chunk in x.links.chunks(BATCH_ROWS) {
+        let sql = format!(
+            "INSERT INTO note_links (source_note_id, target_key, target_text, display, line, context) VALUES {}",
+            placeholders(chunk.len(), 6, 1)
+        );
+        let mut q = sqlx::query(&sql);
+        for link in chunk {
+            q = q
+                .bind(&id)
+                .bind(&link.key)
+                .bind(&link.target_text)
+                .bind(&link.display)
+                .bind(i64::try_from(link.line).unwrap_or(i64::MAX))
+                .bind(&link.context);
+        }
+        q.execute(&mut *conn).await?;
     }
 
-    for link in &x.links {
-        sqlx::query(
-            "INSERT INTO note_links (source_note_id, target_key, target_text, display, line, context) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        )
-        .bind(&id)
-        .bind(&link.key)
-        .bind(&link.target_text)
-        .bind(&link.display)
-        .bind(i64::try_from(link.line).unwrap_or(i64::MAX))
-        .bind(&link.context)
-        .execute(&mut *conn)
-        .await?;
-    }
-
-    let tags_text = x
-        .frontmatter_tags
+    let tags_text = all_tags
         .iter()
-        .chain(&x.inline_tags)
-        .map(String::as_str)
+        .map(|t| t.as_str())
         .collect::<Vec<_>>()
         .join(" ");
     sqlx::query("INSERT INTO note_fts (rowid, title, body, tags) VALUES (?1, ?2, ?3, ?4)")

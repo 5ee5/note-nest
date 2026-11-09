@@ -89,9 +89,10 @@ impl Database {
         .bind(i64::from(n.archived))
         .execute(&mut *tx)
         .await?;
-        write_derived(&mut tx, n, x, false).await?;
+        write_derived(&mut tx, n, x, false, None).await?;
         prune_tags(&mut tx).await?;
         tx.commit().await?;
+        self.index_changed();
         Ok(())
     }
 
@@ -105,6 +106,7 @@ impl Database {
         let mut tx = self.pool().begin().await?;
         delete_note_tx(&mut tx, &id.to_string()).await?;
         tx.commit().await?;
+        self.index_changed();
         Ok(())
     }
 
@@ -132,7 +134,7 @@ impl Database {
             extracted,
         } in entries
         {
-            sqlx::query(&insert_note_sql())
+            let inserted = sqlx::query(&insert_note_sql())
                 .bind(n.id.to_string())
                 .bind(&n.path)
                 .bind(&n.title)
@@ -144,7 +146,14 @@ impl Database {
                 .bind(n.last_opened_at.map(|t| t.to_rfc3339()))
                 .execute(&mut *tx)
                 .await?;
-            write_derived(&mut tx, n, extracted, true).await?;
+            write_derived(
+                &mut tx,
+                n,
+                extracted,
+                true,
+                Some(inserted.last_insert_rowid()),
+            )
+            .await?;
         }
         let mut sorted: Vec<&String> = folders.iter().collect();
         sorted.sort();
@@ -165,6 +174,7 @@ impl Database {
             ids.insert(path.as_str(), row.try_get("id")?);
         }
         tx.commit().await?;
+        self.index_changed();
         Ok(())
     }
 
