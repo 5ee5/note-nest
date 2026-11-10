@@ -13,6 +13,7 @@ pub mod frontmatter;
 pub mod hash;
 pub mod markdown;
 pub mod models;
+pub mod portable;
 pub mod services;
 pub mod tag;
 

@@ -7,8 +7,8 @@ use notenest_core::models::{
     BrokenLink, Graph, NoteEntry, NoteLinks, NoteRecord, NoteRef, SearchHit, TagCount,
 };
 use notenest_core::services::{
-    watch, AffectedNote, Attachment, Draft, LinkUpdateReport, NoteContent, RenameOutcome, SaveMode,
-    VaultChange, Workspace,
+    watch, AffectedNote, Attachment, Draft, ExportReport, ImportReport, LinkUpdateReport,
+    NoteContent, RenameOutcome, SaveMode, VaultChange, Workspace,
 };
 use notenest_core::{Error, Result};
 use serde::Serialize;
@@ -532,5 +532,63 @@ pub async fn move_folder_with_links(
         .workspace()
         .await?
         .move_folder_with_links(&path, new_parent.as_deref())
+        .await
+}
+
+/// Copies Markdown files (absolute paths chosen in a file dialog) into a vault folder.
+#[tauri::command]
+pub async fn import_files(
+    state: State<'_, AppState>,
+    paths: Vec<String>,
+    folder: Option<String>,
+) -> Result<ImportReport> {
+    let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+    state
+        .workspace()
+        .await?
+        .import_files(&paths, folder.as_deref())
+        .await
+}
+
+/// Copies a folder (chosen in a folder dialog) into a vault folder.
+#[tauri::command]
+pub async fn import_folder(
+    state: State<'_, AppState>,
+    path: String,
+    folder: Option<String>,
+) -> Result<ImportReport> {
+    state
+        .workspace()
+        .await?
+        .import_folder(Path::new(&path), folder.as_deref())
+        .await
+}
+
+/// Writes one note to a file chosen in a save dialog.
+#[tauri::command]
+pub async fn export_note(
+    state: State<'_, AppState>,
+    id: Uuid,
+    path: String,
+    standard: bool,
+) -> Result<ExportReport> {
+    state
+        .workspace()
+        .await?
+        .export_note(id, Path::new(&path), standard)
+        .await
+}
+
+/// Copies the whole vault into a new folder inside the folder chosen in a dialog.
+#[tauri::command]
+pub async fn export_vault(
+    state: State<'_, AppState>,
+    path: String,
+    standard: bool,
+) -> Result<ExportReport> {
+    state
+        .workspace()
+        .await?
+        .export_vault(Path::new(&path), standard)
         .await
 }

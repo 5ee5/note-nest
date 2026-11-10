@@ -61,6 +61,10 @@ pub fn run() {
             commands::move_note_with_links,
             commands::rename_folder_with_links,
             commands::move_folder_with_links,
+            commands::import_files,
+            commands::import_folder,
+            commands::export_note,
+            commands::export_vault,
         ])
         .run(tauri::generate_context!())
         .expect("error while running NoteNest");

@@ -334,23 +334,32 @@ pub fn parse_meta(content: &str) -> Meta {
 /// returned unchanged when nothing needs to change.
 #[must_use]
 pub fn set_meta(content: &str, update: &MetaUpdate) -> String {
+    // Desired line per key: Some(line) = write it, None = remove the key.
+    edit_meta(content, |key| match key {
+        "id" => update.id.map(|u| Some(format!("id: {u}"))),
+        "pinned" => update.pinned.map(|b| b.then(|| "pinned: true".to_owned())),
+        "archived" => update
+            .archived
+            .map(|b| b.then(|| "archived: true".to_owned())),
+        _ => None,
+    })
+}
+
+/// Returns `content` without the keys NoteNest owns (`id`, `pinned`, `archived`);
+/// the frontmatter block is dropped if nothing else was in it.
+#[must_use]
+pub fn strip_meta(content: &str) -> String {
+    edit_meta(content, |_| Some(None))
+}
+
+/// `wanted(key)`: `None` = leave the key alone, `Some(None)` = remove it,
+/// `Some(Some(line))` = write that line.
+fn edit_meta(content: &str, wanted: impl Fn(&str) -> Option<Option<String>>) -> String {
     let (bom, text) = match content.strip_prefix(BOM) {
         Some(rest) => (BOM, rest),
         None => ("", content),
     };
     let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
-
-    // Desired line per key: Some(line) = write it, None = remove the key.
-    let wanted = |key: &str| -> Option<Option<String>> {
-        match key {
-            "id" => update.id.map(|u| Some(format!("id: {u}"))),
-            "pinned" => update.pinned.map(|b| b.then(|| "pinned: true".to_owned())),
-            "archived" => update
-                .archived
-                .map(|b| b.then(|| "archived: true".to_owned())),
-            _ => None,
-        }
-    };
 
     let Some(block) = find_block(text) else {
         let lines: Vec<String> = ["id", "pinned", "archived"]
@@ -441,6 +450,22 @@ mod tests {
             id: Some(id()),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn strip_meta_removes_only_our_keys() {
+        assert_eq!(
+            strip_meta(&format!(
+                "---\nid: {ID}\ntags: [a]\npinned: true\n---\nBody"
+            )),
+            "---\ntags: [a]\n---\nBody"
+        );
+        assert_eq!(
+            strip_meta(&format!("---\nid: {ID}\narchived: true\n---\nBody")),
+            "Body"
+        );
+        assert_eq!(strip_meta("No block"), "No block");
+        assert_eq!(strip_meta("---\ntitle: x\n---\nB"), "---\ntitle: x\n---\nB");
     }
 
     #[test]
