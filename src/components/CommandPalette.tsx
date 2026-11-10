@@ -5,11 +5,16 @@ import {
   changeTheme,
   createFolder,
   createNote,
+  exportCurrentNote,
+  exportVault,
+  importMarkdownFiles,
+  importMarkdownFolder,
   openDailyNote,
   openNote,
   searchFor,
 } from "../lib/actions";
 import { THEMES, type Theme } from "../lib/theme";
+import { isTauri } from "../lib/api";
 import { isDailyNote, type View } from "../lib/notes";
 import { useNotes } from "../store/notes";
 import { useUi } from "../store/ui";
@@ -118,6 +123,23 @@ export function CommandPalette() {
             Toggle note explorer
           </Command.Item>
         </Command.Group>
+
+        {isTauri() && (
+          <Command.Group heading="Import and export" className={groupClass}>
+            <Command.Item className={itemClass} onSelect={run(importMarkdownFiles)}>
+              Import Markdown files…
+            </Command.Item>
+            <Command.Item className={itemClass} onSelect={run(importMarkdownFolder)}>
+              Import a folder…
+            </Command.Item>
+            <Command.Item className={itemClass} onSelect={run(exportCurrentNote)}>
+              Export this note…
+            </Command.Item>
+            <Command.Item className={itemClass} onSelect={run(exportVault)}>
+              Export the vault…
+            </Command.Item>
+          </Command.Group>
+        )}
 
         <Command.Group heading="View" className={groupClass}>
           <Command.Item className={itemClass} onSelect={run(() => changeEditorMode("edit"))}>

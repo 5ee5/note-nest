@@ -181,6 +181,32 @@ export interface VaultChange {
   files: boolean;
 }
 
+/** Something that was not imported or exported, and why. */
+export interface SkippedItem {
+  path: string;
+  reason: string;
+}
+
+export interface ImportReport {
+  /** Notes created, as vault paths. */
+  notes: string[];
+  /** Other files copied into the vault (attachments). */
+  files: number;
+  /** Imported notes given a new id because theirs was already used in the vault. */
+  newIds: number;
+  /** For a folder import: the folder created in the vault. */
+  folder: string | null;
+  skipped: SkippedItem[];
+}
+
+export interface ExportReport {
+  /** The file or folder written. */
+  destination: string;
+  notes: number;
+  files: number;
+  skipped: SkippedItem[];
+}
+
 export interface NotesApi {
   /** True for sample data that is never written to disk. */
   readonly isSample: boolean;
@@ -245,6 +271,24 @@ export interface NotesApi {
 
   getSetting(key: string): Promise<string | null>;
   setSetting(key: string, value: string): Promise<void>;
+
+  /**
+   * Copies Markdown files (absolute paths outside the vault) into vault folder `folder`
+   * (the root if null), with the files they reference. Never overwrites anything.
+   */
+  importFiles(paths: string[], folder: string | null): Promise<ImportReport>;
+  /** Copies a folder tree into vault folder `folder` as a new folder. */
+  importFolder(path: string, folder: string | null): Promise<ImportReport>;
+  /**
+   * Writes a note to `path` (outside the vault) with its attachments. `standard` removes
+   * NoteNest's frontmatter keys and turns wiki links into plain text.
+   */
+  exportNote(id: string, path: string, standard: boolean): Promise<ExportReport>;
+  /**
+   * Copies the vault into a new folder inside `path`. `standard` removes NoteNest's
+   * frontmatter keys and turns wiki links into relative Markdown links.
+   */
+  exportVault(path: string, standard: boolean): Promise<ExportReport>;
 
   /** Brings the index in line with the files now and resolves to what changed outside the app. */
   reconcile(): Promise<VaultChange>;

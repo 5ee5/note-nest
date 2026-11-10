@@ -35,6 +35,8 @@ import type {
   SaveMode,
   TrashItem,
   VaultChange,
+  ImportReport,
+  ExportReport,
 } from "./types";
 
 export function localDateString(date = new Date()): string {
@@ -113,6 +115,8 @@ export class MockNotesApi implements NotesApi {
   private counter = 0;
   private attachments = 0;
   private vaultListeners = new Set<(change: VaultChange) => void>();
+  /** Test hook: a pretend disk outside the vault (absolute path -> text) for import and export. */
+  readonly disk = new Map<string, string>();
 
   constructor(options: { sample?: boolean } = {}) {
     if (options.sample ?? true) this.seed();
@@ -688,6 +692,76 @@ export class MockNotesApi implements NotesApi {
   async setSetting(key: string, value: string): Promise<void> {
     this.settings.set(key, value);
     return Promise.resolve();
+  }
+
+  private importOne(path: string, folder: string, report: ImportReport): void {
+    const content = this.disk.get(path);
+    const name = path.slice(path.lastIndexOf("/") + 1);
+    if (content === undefined || !/\.md$/i.test(name)) {
+      report.skipped.push({
+        path,
+        reason: content === undefined ? "not found" : "not a Markdown file",
+      });
+      return;
+    }
+    const stem = name.slice(0, -3);
+    const pathFor = (n: number) => {
+      const title = n === 1 ? stem : `${stem} ${n}`;
+      return folder ? `${folder}/${title}.md` : `${title}.md`;
+    };
+    let n = 1;
+    while (this.pathTaken(pathFor(n))) n++;
+    const target = pathFor(n);
+    this.add(target, content);
+    report.notes.push(target);
+  }
+
+  async importFiles(paths: string[], folder: string | null): Promise<ImportReport> {
+    if (folder && !this.folders.has(folder)) throw new ApiError("not_found", `folder ${folder}`);
+    const report: ImportReport = { notes: [], files: 0, newIds: 0, folder: null, skipped: [] };
+    for (const p of paths) this.importOne(p, folder ?? "", report);
+    return Promise.resolve(report);
+  }
+
+  async importFolder(path: string, folder: string | null): Promise<ImportReport> {
+    const base = path.slice(path.lastIndexOf("/") + 1);
+    const topFor = (n: number) => {
+      const name = n === 1 ? base : `${base} ${n}`;
+      return folder ? `${folder}/${name}` : name;
+    };
+    let n = 1;
+    while (this.folders.has(topFor(n))) n++;
+    const top = topFor(n);
+    this.ensureFolder(top);
+    const report: ImportReport = { notes: [], files: 0, newIds: 0, folder: top, skipped: [] };
+    for (const file of [...this.disk.keys()].sort()) {
+      if (!file.startsWith(`${path}/`)) continue;
+      const rel = file.slice(path.length + 1);
+      const sub = rel.includes("/") ? `${top}/${rel.slice(0, rel.lastIndexOf("/"))}` : top;
+      this.ensureFolder(sub);
+      if (/\.md$/i.test(rel)) this.importOne(file, sub, report);
+      else report.files += 1;
+    }
+    return Promise.resolve(report);
+  }
+
+  async exportNote(id: string, path: string, standard: boolean): Promise<ExportReport> {
+    const s = this.get(id);
+    const dest = /\.md$/i.test(path) ? path : `${path}.md`;
+    this.disk.set(
+      dest,
+      standard ? s.content.replace(/^(id|pinned|archived): .*\n/gm, "") : s.content,
+    );
+    return Promise.resolve({ destination: dest, notes: 1, files: 0, skipped: [] });
+  }
+
+  async exportVault(path: string, standard: boolean): Promise<ExportReport> {
+    const dest = `${path}/Sample export`;
+    for (const s of this.notes.values()) {
+      const text = standard ? s.content.replace(/^(id|pinned|archived): .*\n/gm, "") : s.content;
+      this.disk.set(`${dest}/${s.note.path}`, text);
+    }
+    return Promise.resolve({ destination: dest, notes: this.notes.size, files: 0, skipped: [] });
   }
 
   async reconcile(): Promise<VaultChange> {

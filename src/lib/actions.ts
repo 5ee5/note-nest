@@ -2,7 +2,16 @@ import { toApiError } from "./api";
 import { localDateString } from "./api/mock";
 import type { Theme } from "./theme";
 import type { EditorMode } from "../store/ui";
-import type { AffectedNote, Draft, LinkUpdateReport, NoteSummary } from "./api";
+import type {
+  AffectedNote,
+  Draft,
+  ExportReport,
+  ImportReport,
+  LinkUpdateReport,
+  NoteSummary,
+  SkippedItem,
+} from "./api";
+import { pickFolder, pickMarkdownFiles, pickSaveMarkdown } from "./pickers";
 import { altText, isImageFile, MAX_ATTACHMENT_BYTES } from "./images";
 import { normalizeTag } from "./tags";
 import { useEditor } from "../store/editor";
@@ -457,4 +466,102 @@ export function followPreviewLink(href: string, title: string | null): boolean {
     return true;
   }
   return false;
+}
+
+// ------------------------------------------------------------- import and export
+
+const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
+
+function reportSkipped(skipped: SkippedItem[]): void {
+  if (skipped.length === 0) return;
+  const shown = skipped
+    .slice(0, 3)
+    .map((s) => `${s.path} (${s.reason})`)
+    .join("; ");
+  const more = skipped.length > 3 ? ` and ${skipped.length - 3} more` : "";
+  ui().notify("warning", `Skipped ${plural(skipped.length, "item")}: ${shown}${more}.`);
+}
+
+/** Where imports go: the folder being viewed, else the vault root. */
+function importTarget(): string | null {
+  const view = ui().view;
+  return view.kind === "folder" ? view.value : null;
+}
+
+async function finishImport(report: ImportReport): Promise<void> {
+  await useNotes.getState().load();
+  if (report.notes.length > 0 || report.files > 0) {
+    let message = `Imported ${plural(report.notes.length, "note")}`;
+    if (report.files > 0) message += ` and ${plural(report.files, "attachment")}`;
+    if (report.folder) message += ` into “${report.folder}”`;
+    message += ".";
+    if (report.newIds > 0) {
+      message += ` ${plural(report.newIds, "note")} already used an id in this vault and got a new one.`;
+    }
+    ui().notify("info", message);
+  } else if (report.skipped.length === 0) {
+    ui().notify("info", "There was nothing to import.");
+  }
+  reportSkipped(report.skipped);
+  if (report.notes.length === 1) {
+    const note = useNotes.getState().notes.find((n) => n.path === report.notes[0]);
+    if (note) await openNote(note.id);
+  }
+}
+
+/** Asks for Markdown files and copies them (and their attachments) into the vault. */
+export async function importMarkdownFiles(): Promise<void> {
+  const paths = await attempt("Could not open the file picker", pickMarkdownFiles);
+  if (!paths || paths.length === 0) return;
+  const report = await attempt("Could not import", () => api().importFiles(paths, importTarget()));
+  if (report) await finishImport(report);
+}
+
+/** Asks for a folder and copies it, with its subfolders and attachments, into the vault. */
+export async function importMarkdownFolder(): Promise<void> {
+  const path = await attempt("Could not open the folder picker", () =>
+    pickFolder("Import a folder of Markdown notes"),
+  );
+  if (!path) return;
+  const report = await attempt("Could not import", () => api().importFolder(path, importTarget()));
+  if (report) await finishImport(report);
+}
+
+function finishExport(report: ExportReport, what: string): void {
+  let message = `Exported ${what}`;
+  if (report.files > 0) message += ` and ${plural(report.files, "attachment")}`;
+  ui().notify("info", `${message} to ${report.destination}.`);
+  reportSkipped(report.skipped);
+}
+
+/** Asks where to save the open note and writes it there as Markdown. */
+export async function exportCurrentNote(): Promise<void> {
+  const id = useEditor.getState().noteId ?? ui().selectedNoteId;
+  const note = useNotes.getState().notes.find((n) => n.id === id);
+  if (!note) {
+    ui().notify("info", "Open a note to export it.");
+    return;
+  }
+  await useEditor.getState().flush(); // export what is on screen
+  const path = await attempt("Could not open the save dialog", () =>
+    pickSaveMarkdown(`${note.title}.md`),
+  );
+  if (!path) return;
+  const report = await attempt("Could not export the note", () =>
+    api().exportNote(note.id, path, ui().exportStandard),
+  );
+  if (report) finishExport(report, `“${note.title}”`);
+}
+
+/** Asks for a folder and copies the whole vault into a new folder inside it. */
+export async function exportVault(): Promise<void> {
+  await useEditor.getState().flush();
+  const path = await attempt("Could not open the folder picker", () =>
+    pickFolder("Choose where to export the vault"),
+  );
+  if (!path) return;
+  const report = await attempt("Could not export the vault", () =>
+    api().exportVault(path, ui().exportStandard),
+  );
+  if (report) finishExport(report, plural(report.notes, "note"));
 }

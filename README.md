@@ -3,7 +3,7 @@
 Local-first, privacy-focused Markdown note-taking and personal knowledge management app.
 Markdown files are the source of truth; no accounts or cloud services required.
 
-**Status:** Milestone 5 (reliability and polish) in progress: NoteNest now notices notes and folders changed in other apps while it runs. Notes are real Markdown files in a vault folder, edited in a CodeMirror editor with formatting tools, live preview, image attachments and statistics, plus autosave, folders, trash and crash recovery. Notes can be tagged and linked with `[[wiki links]]`, with backlinks, full-text search, favorites, recently opened notes and a link graph.
+**Status:** Milestone 5 (reliability and polish) in progress: NoteNest now notices notes and folders changed in other apps while it runs, and imports and exports Markdown (single notes or the whole vault, with attachments). Notes are real Markdown files in a vault folder, edited in a CodeMirror editor with formatting tools, live preview, image attachments and statistics, plus autosave, folders, trash and crash recovery. Notes can be tagged and linked with `[[wiki links]]`, with backlinks, full-text search, favorites, recently opened notes and a link graph.
 
 ## Stack
 

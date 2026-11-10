@@ -3,7 +3,13 @@ import { X } from "lucide-react";
 import { THEMES, type Theme } from "../lib/theme";
 import { modLabel } from "../lib/shortcuts";
 import { isTauri } from "../lib/api";
-import { changeTheme } from "../lib/actions";
+import {
+  changeTheme,
+  exportCurrentNote,
+  exportVault,
+  importMarkdownFiles,
+  importMarkdownFolder,
+} from "../lib/actions";
 import { useUi } from "../store/ui";
 import { useVault } from "../store/vault";
 
@@ -18,6 +24,14 @@ export function SettingsDialog() {
   const setOpen = useUi((s) => s.setSettingsOpen);
   const theme = useUi((s) => s.theme);
   const vaultPath = useVault((s) => s.path);
+  const exportStandard = useUi((s) => s.exportStandard);
+  const setExportStandard = useUi((s) => s.setExportStandard);
+  /** Closes the dialog (native pickers open on top of the window) and runs `fn`. */
+  const close = (fn: () => Promise<void>) => () => {
+    setOpen(false);
+    void fn();
+  };
+  const buttonClass = "rounded-md border border-border px-2.5 py-1 text-xs hover:bg-surface-hover";
   const changeVault = useVault((s) => s.change);
   const mod = modLabel();
 
@@ -75,6 +89,45 @@ export function SettingsDialog() {
               >
                 Change vault…
               </button>
+            </section>
+          )}
+
+          {isTauri() && (
+            <section className="mt-5" aria-label="Import and export">
+              <h3 className="mb-1 text-sm font-medium">Import and export</h3>
+              <p className="text-sm text-fg-muted">
+                Imports are copied into the folder you are viewing (or the vault root); nothing is
+                overwritten.
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button type="button" onClick={close(importMarkdownFiles)} className={buttonClass}>
+                  Import Markdown files…
+                </button>
+                <button type="button" onClick={close(importMarkdownFolder)} className={buttonClass}>
+                  Import a folder…
+                </button>
+                <button type="button" onClick={close(exportCurrentNote)} className={buttonClass}>
+                  Export this note…
+                </button>
+                <button type="button" onClick={close(exportVault)} className={buttonClass}>
+                  Export the vault…
+                </button>
+              </div>
+              <label className="mt-2 flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={exportStandard}
+                  onChange={(e) => setExportStandard(e.target.checked)}
+                  className="mt-0.5 accent-accent"
+                />
+                <span>
+                  Export as standard Markdown
+                  <span className="block text-xs text-fg-muted">
+                    Wiki links become regular links and NoteNest’s own properties (id, pinned,
+                    archived) are left out.
+                  </span>
+                </span>
+              </label>
             </section>
           )}
 

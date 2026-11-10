@@ -50,6 +50,8 @@ interface UiState {
   linkUpdate: LinkUpdateRequest | null;
   /** Incremented to ask the explorer to focus its search box. */
   searchFocusTick: number;
+  /** Exports convert to standard Markdown (wiki links, NoteNest's own frontmatter keys). */
+  exportStandard: boolean;
 
   setTheme: (theme: Theme) => void;
   setEditorMode: (mode: EditorMode) => void;
@@ -61,6 +63,7 @@ interface UiState {
   setExplorerCollapsed: (collapsed: boolean) => void;
   setPaletteOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
+  setExportStandard: (standard: boolean) => void;
   focusSearch: () => void;
   notify: (kind: Notice["kind"], message: string) => void;
   dismissNotice: (id: number) => void;
@@ -87,6 +90,7 @@ export const useUi = create<UiState>((set) => ({
   prompt: null,
   linkUpdate: null,
   searchFocusTick: 0,
+  exportStandard: true,
 
   setTheme: (theme) => {
     saveTheme(theme);
@@ -102,6 +106,7 @@ export const useUi = create<UiState>((set) => ({
   setExplorerCollapsed: (explorerCollapsed) => set({ explorerCollapsed }),
   setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+  setExportStandard: (exportStandard) => set({ exportStandard }),
   focusSearch: () =>
     set((s) => ({ explorerCollapsed: false, searchFocusTick: s.searchFocusTick + 1 })),
   notify: (kind, message) =>

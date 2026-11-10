@@ -184,3 +184,48 @@ pinned to ~5.9 because typescript-eslint does not support TS 7.
 - The tiny window between a save's hash check and its rename (see Milestone 2) remains.
 - Verified with real inotify events in tests on Linux, and by compiling the Tauri crate. The desktop app
   (event delivery to the webview, FSEvents on macOS, ReadDirectoryChangesW on Windows) has not been run.
+
+## Milestone 5: import and export
+
+- **Import copies, never moves or overwrites.**
+  - Files and folders are copied into the folder being viewed (or the vault root). A taken name gets a
+    " 2", " 3", ... suffix, and a folder import always creates a new folder named after the source.
+  - An imported note whose frontmatter `id` is already used in the vault gets a fresh id, so the original
+    keeps its identity (and its backlinks).
+  - Hidden files and folders (`.obsidian/`, `.git/`) and symbolic links are not copied. Files over 200 MB
+    are skipped.
+  - Importing the vault itself, a folder inside it, or a folder that contains it is refused.
+- **Imported files bring their attachments.** Local files referenced with standard Markdown links or
+  images (`![](img/a.png)`, `[pdf](../docs/x.pdf)`) are copied along. They keep the same relative path when
+  that lands inside the vault and is free. Otherwise they go to `Attachments/` with the link rewritten.
+  References that go through a hidden path component (`../.ssh/...`) are never followed. A folder import
+  needs none of this, because the whole tree keeps its structure.
+- **Export writes outside the vault only.**
+  - The vault is exported into a new folder, `<vault name> export <date>`, inside the chosen folder, and
+    existing files are never overwritten. Hidden entries (including `.notenest/`) are left out.
+  - A single note goes to the file picked in a save dialog, which asks before replacing. Its attachments go
+    next to it at the same relative path, or under `Attachments/` (renamed if taken, with the link
+    rewritten) when the path would climb out of the export folder.
+- **Standard Markdown** (on by default; a checkbox in Settings turns it off for an exact copy):
+  - **Frontmatter:** NoteNest's own keys (`id`, `pinned`, `archived`) are removed and other frontmatter
+    (tags, aliases) is kept. A block that held only our keys is dropped.
+  - **Wiki links, vault export:** `[[Note#Heading|shown]]` becomes `[shown](relative/Note.md#heading)` with
+    a percent-encoded path and a GitHub-style heading anchor.
+  - **Wiki links, single-note export:** links become plain text, because the linked notes are not exported.
+  - **Unresolved links** become their text.
+- **Where:** Settings has an "Import and export" section, and the command palette has the same four
+  commands. Both appear in the desktop app only, because they need native file dialogs
+  (`dialog:allow-save` was added to the capabilities).
+- **No ZIP, HTML or PDF.** A plain folder is the most standard format. The spec leaves HTML and PDF for
+  later.
+
+### Known limitations (import and export)
+
+- Embeds (`![[image.png]]`) and same-note links (`[[#Heading]]`) are left as written on export.
+  Reference-style links (`[x][ref]`) are not followed for attachments.
+- After a standard export and an import back, links are regular Markdown links, which NoteNest does not
+  count as wiki links (no backlinks or graph edges for them).
+- Only `.md` files count as notes, so `.markdown` and `.txt` are imported as plain files by a folder import
+  and refused by a file import.
+- Import and export paths come from native dialogs in the webview. The backend refuses paths inside the vault,
+  but otherwise trusts them. This is part of the Milestone 5 security review.

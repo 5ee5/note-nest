@@ -21,6 +21,8 @@ import type {
   SaveMode,
   TrashItem,
   VaultChange,
+  ImportReport,
+  ExportReport,
 } from "./types";
 
 // Shapes returned by the Rust commands (snake_case, see crates/notenest-core).
@@ -388,6 +390,22 @@ export class TauriNotesApi implements NotesApi {
     return call("set_setting", { key, value });
   }
 
+  async importFiles(paths: string[], folder: string | null): Promise<ImportReport> {
+    return toImport(await call<ImportDto>("import_files", { paths, folder }));
+  }
+
+  async importFolder(path: string, folder: string | null): Promise<ImportReport> {
+    return toImport(await call<ImportDto>("import_folder", { path, folder }));
+  }
+
+  exportNote(id: string, path: string, standard: boolean): Promise<ExportReport> {
+    return call("export_note", { id, path, standard });
+  }
+
+  exportVault(path: string, standard: boolean): Promise<ExportReport> {
+    return call("export_vault", { path, standard });
+  }
+
   reconcile(): Promise<VaultChange> {
     return call("reconcile");
   }
@@ -406,6 +424,24 @@ export class TauriNotesApi implements NotesApi {
       unlisten?.();
     };
   }
+}
+
+interface ImportDto {
+  notes: string[];
+  files: number;
+  new_ids: number;
+  folder: string | null;
+  skipped: { path: string; reason: string }[];
+}
+
+function toImport(d: ImportDto): ImportReport {
+  return {
+    notes: d.notes,
+    files: d.files,
+    newIds: d.new_ids,
+    folder: d.folder,
+    skipped: d.skipped,
+  };
 }
 
 /** Event the backend emits after it reconciled changes made outside the app (see commands.rs). */
