@@ -19,6 +19,8 @@ import {
   renameNote,
   setArchived,
   setPinned,
+  closeMissingNote,
+  saveMissingAsNewNote,
 } from "../lib/actions";
 import { modLabel } from "../lib/shortcuts";
 import { cn } from "../lib/cn";
@@ -48,6 +50,7 @@ const STATUS_LABEL: Record<SaveStatus, string> = {
   saved: "Saved",
   error: "Save failed",
   conflict: "Changed on disk",
+  missing: "Not saved: note is gone",
 };
 
 function ToolbarButton({
@@ -110,12 +113,16 @@ export function EditorPane() {
   const setExplorerCollapsed = useUi((s) => s.setExplorerCollapsed);
   const setPaletteOpen = useUi((s) => s.setPaletteOpen);
   const mode = useUi((s) => s.editorMode);
-  const { noteId, content, status, message, loading, loadError, revision } = useEditor();
+  const { noteId, content, status, message, loading, loadError, revision, missingNote } =
+    useEditor();
   const edit = useEditor((s) => s.edit);
   const keepMine = useEditor((s) => s.keepMine);
   const loadTheirs = useEditor((s) => s.loadTheirs);
   const flush = useEditor((s) => s.flush);
-  const note = notes.find((n) => n.id === (noteId ?? selectedNoteId)) ?? null;
+  const note =
+    notes.find((n) => n.id === (noteId ?? selectedNoteId)) ??
+    (status === "missing" ? missingNote : null);
+  const missing = status === "missing";
   const mod = modLabel();
 
   // Keep the connections panel current: reload when the note changes or the index updates.
@@ -170,29 +177,33 @@ export function EditorPane() {
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex items-center gap-1 px-6 pt-5">
             <TitleInput key={note.id + note.title} id={note.id} title={note.title} />
-            <ToolbarButton
-              label={note.pinned ? "Unpin note" : "Pin note"}
-              pressed={note.pinned}
-              onClick={() => void setPinned(note.id, !note.pinned)}
-            >
-              <Star aria-hidden className={cn("size-4", note.pinned && "fill-current")} />
-            </ToolbarButton>
-            <ToolbarButton
-              label={note.archived ? "Unarchive note" : "Archive note"}
-              onClick={() => void setArchived(note.id, !note.archived)}
-            >
-              {note.archived ? (
-                <ArchiveRestore aria-hidden className="size-4" />
-              ) : (
-                <Archive aria-hidden className="size-4" />
-              )}
-            </ToolbarButton>
-            <ToolbarButton label="Duplicate note" onClick={() => void duplicateNote(note.id)}>
-              <Copy aria-hidden className="size-4" />
-            </ToolbarButton>
-            <ToolbarButton label="Delete note" onClick={() => void deleteNote(note.id)}>
-              <Trash2 aria-hidden className="size-4" />
-            </ToolbarButton>
+            {!missing && (
+              <>
+                <ToolbarButton
+                  label={note.pinned ? "Unpin note" : "Pin note"}
+                  pressed={note.pinned}
+                  onClick={() => void setPinned(note.id, !note.pinned)}
+                >
+                  <Star aria-hidden className={cn("size-4", note.pinned && "fill-current")} />
+                </ToolbarButton>
+                <ToolbarButton
+                  label={note.archived ? "Unarchive note" : "Archive note"}
+                  onClick={() => void setArchived(note.id, !note.archived)}
+                >
+                  {note.archived ? (
+                    <ArchiveRestore aria-hidden className="size-4" />
+                  ) : (
+                    <Archive aria-hidden className="size-4" />
+                  )}
+                </ToolbarButton>
+                <ToolbarButton label="Duplicate note" onClick={() => void duplicateNote(note.id)}>
+                  <Copy aria-hidden className="size-4" />
+                </ToolbarButton>
+                <ToolbarButton label="Delete note" onClick={() => void deleteNote(note.id)}>
+                  <Trash2 aria-hidden className="size-4" />
+                </ToolbarButton>
+              </>
+            )}
           </div>
           <div className="flex items-center justify-between px-7 pt-1 pb-2 text-xs text-fg-muted">
             <span>{note.path}</span>
@@ -201,7 +212,7 @@ export function EditorPane() {
             </span>
           </div>
 
-          <TagBar note={note} />
+          {!missing && <TagBar note={note} />}
 
           {status === "conflict" && (
             <div role="alert" className="mx-6 mb-2 rounded-md border border-ring px-3 py-2 text-sm">
@@ -228,6 +239,30 @@ export function EditorPane() {
               <p className="mt-1 text-xs text-fg-muted">
                 Either way, the other version is kept so you can get it back.
               </p>
+            </div>
+          )}
+          {missing && (
+            <div role="alert" className="mx-6 mb-2 rounded-md border border-ring px-3 py-2 text-sm">
+              <p>
+                This note was deleted or moved outside NoteNest, but you have unsaved changes. They
+                are still here and in recovery drafts.
+              </p>
+              <div className="mt-2 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => void saveMissingAsNewNote()}
+                  className="rounded-md bg-accent px-2.5 py-1 text-xs text-accent-fg"
+                >
+                  Save as a new note
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void closeMissingNote()}
+                  className="rounded-md border border-border px-2.5 py-1 text-xs hover:bg-surface-hover"
+                >
+                  Close and keep a recovery copy
+                </button>
+              </div>
             </div>
           )}
           {status === "error" && (

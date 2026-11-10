@@ -30,6 +30,8 @@ export function MarkdownPreview({ noteId, content }: Props) {
   const [renderedText, setRenderedText] = useState<string | null>(null);
   const latest = useRef(0);
   const first = useRef(true);
+  // Attachments added or removed outside the app change what the preview can show.
+  const filesRevision = useNotes((s) => s.filesRevision);
 
   const render = async (text: string) => {
     const ticket = ++latest.current;
@@ -57,7 +59,7 @@ export function MarkdownPreview({ noteId, content }: Props) {
     return () => clearTimeout(timer);
     // `render` only reads refs, state setters and stable props.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [content, noteId, large]);
+  }, [content, noteId, large, filesRevision]);
 
   // Derived, not stored: the shown HTML is out of date when the text has moved on.
   const stale = renderedText !== content;

@@ -34,6 +34,7 @@ import type {
   RenderedMarkdown,
   SaveMode,
   TrashItem,
+  VaultChange,
 } from "./types";
 
 export function localDateString(date = new Date()): string {
@@ -111,6 +112,7 @@ export class MockNotesApi implements NotesApi {
   private settings = new Map<string, string>();
   private counter = 0;
   private attachments = 0;
+  private vaultListeners = new Set<(change: VaultChange) => void>();
 
   constructor(options: { sample?: boolean } = {}) {
     if (options.sample ?? true) this.seed();
@@ -202,6 +204,23 @@ export class MockNotesApi implements NotesApi {
   /** Test hook: change a note's content behind the app's back, like an external editor. */
   externalEdit(id: string, content: string): void {
     this.get(id).content = content;
+  }
+
+  /** Test hook: delete a note behind the app's back, like the file manager would. */
+  externalDelete(id: string): void {
+    this.get(id);
+    this.notes.delete(id);
+  }
+
+  /** Test hook: add a note behind the app's back; returns its id. */
+  externalCreate(path: string, content: string): string {
+    return this.add(path, content).id;
+  }
+
+  /** Test hook: tell listeners about outside changes, as the file watcher would. */
+  emitVaultChange(change: Partial<VaultChange>): void {
+    const full: VaultChange = { changed: [], removed: [], folders: false, files: false, ...change };
+    for (const listener of this.vaultListeners) listener(full);
   }
 
   /** Test hook: current stored content. */
@@ -423,10 +442,12 @@ export class MockNotesApi implements NotesApi {
   }
 
   async stashDraft(id: string, content: string, baseHash: string): Promise<void> {
-    const s = this.get(id);
+    // Like the backend: a note that vanished keeps updating the draft it already has.
+    const path = this.notes.get(id)?.note.path ?? this.drafts.get(id)?.path;
+    if (path === undefined) throw new ApiError("not_found", `note ${id} not found`);
     this.drafts.set(id, {
       noteId: id,
-      path: s.note.path,
+      path,
       baseHash,
       content,
       stashedAt: new Date().toISOString(),
@@ -667,5 +688,16 @@ export class MockNotesApi implements NotesApi {
   async setSetting(key: string, value: string): Promise<void> {
     this.settings.set(key, value);
     return Promise.resolve();
+  }
+
+  async reconcile(): Promise<VaultChange> {
+    // Nothing changes behind an in-memory vault's back except through the test hooks,
+    // which report their changes with emitVaultChange.
+    return Promise.resolve({ changed: [], removed: [], folders: false, files: false });
+  }
+
+  onVaultChanged(listener: (change: VaultChange) => void): () => void {
+    this.vaultListeners.add(listener);
+    return () => this.vaultListeners.delete(listener);
   }
 }

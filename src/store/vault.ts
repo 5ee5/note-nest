@@ -69,6 +69,12 @@ export const useVault = create<VaultState>((set, get) => ({
       if (opened.duplicate_ids_fixed.length > 0) {
         notify("info", `Copied notes were given new ids: ${opened.duplicate_ids_fixed.join(", ")}`);
       }
+      if (!opened.watching) {
+        notify(
+          "warning",
+          "NoteNest cannot watch this vault for changes made in other apps, so it checks for them when its window is focused.",
+        );
+      }
       set({ path: opened.path });
       await afterVaultOpen();
       set({ phase: "ready" });

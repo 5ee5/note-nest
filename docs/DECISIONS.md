@@ -63,10 +63,10 @@ pinned to ~5.9 because typescript-eslint does not support TS 7.
 
 - Opening a vault re-reads and hashes every note (O(vault size)); fine for ordinary vaults, to be optimized
   in Milestone 5.
-- There is no file watching yet (Milestone 5). External edits are detected when a note is opened or saved,
-  and by reindexing on open. Between the hash check and the rename in a save there is a tiny window in which
-  an external write could be lost; closing it needs OS-level locking.
-- Renaming, moving, deleting or restoring a folder reindexes the whole vault.
+- Between the hash check and the rename in a save there is a tiny window in which an external write could
+  be lost; closing it needs OS-level locking. (File watching, added in Milestone 5, does not close it.)
+- Renaming, moving, deleting or restoring a folder reindexes the whole vault (since Milestone 5 a pass
+  skips reading files it can prove unchanged).
 - Symbolic links inside a vault are ignored and never followed.
 - Files that are not valid UTF-8 are listed but cannot be opened, so they cannot be altered.
 - Windows and macOS filesystem behaviour (case-insensitive names, rename-over-existing) is not covered by
@@ -139,3 +139,48 @@ pinned to ~5.9 because typescript-eslint does not support TS 7.
   open redraws it from scratch.
 - Verified in Chromium against the sample vault (6 notes); not yet looked at on a large, dense real vault or
   in the desktop webviews.
+
+## Milestone 5: watching the vault for outside changes
+
+- **Events are hints; the reindex is the truth.** `notify` (the crate the spec names) watches the vault
+  recursively. Events are never applied one by one, because the OS can drop, merge or reorder them and a
+  rename can arrive as an unrelated delete and create. Each burst (quiet for 250 ms, at most 2 s) triggers
+  the normal incremental reindex, which compares the whole vault with the index. A missed event is caught
+  by the next pass, and the UI also asks for one (`reconcile`) whenever the window regains focus. This is the
+  spec's "reconciliation mechanism" for missed or coalesced events.
+- **Ignored:** anything under a hidden path (`.notenest/` with the index and drafts, `.git/`, `.nn-*.tmp`
+  temp files, editor swap files) and access-only events. NoteNest's own saves do trigger a pass, which finds
+  them already indexed and reports nothing.
+- **Scan cache.** So a pass is cheap, the workspace remembers each note's size, modification time, id and
+  hash from the last read. A file whose size and time are unchanged, and whose index row still matches, is
+  not read again. A file read less than 2 s after it was modified is always read again (timestamps can be
+  coarse, so two writes in one tick would otherwise look identical). On 5 000 notes a pass with nothing
+  changed takes about 90 ms, against about 800 ms for the full read on open. The cache is in memory, so
+  opening a vault still reads every file.
+- **Duplicate ids.** When a copied note shares an id with another, the note the index already knows under
+  that id keeps it (before, it was the first in sorted order, which could re-id the original note while it
+  was open). A duplicate modified less than 2 s ago is left alone and retried, because rewriting a file that
+  is still being copied would cut the copy short.
+- **What the UI does** (`src/lib/vaultSync.ts`). It reloads the note lists, so tags, search, backlinks
+  and the graph follow. The open note:
+  - **Changed, nothing unsaved:** it reloads in place as a minimal edit, so the cursor stays put.
+  - **Changed, unsaved text:** the existing conflict state (autosave paused, "Keep my version" or "Load
+    the version on disk") plus a draft.
+  - **Gone, nothing unsaved:** it closes with a notice. If exactly one note disappeared and one appeared,
+    that is taken as a rename without an id in the frontmatter, and the editor follows it.
+  - **Gone, unsaved text:** the new `missing` state. Autosave stops (saving would recreate a file the user
+    deleted), the text stays in the editor and in recovery drafts, and the banner offers "Save as a new
+    note" or "Close and keep a recovery copy". `stash_draft` keeps updating an existing draft after its note
+    disappeared.
+  - **Other files changed** (attachments): the preview re-renders.
+- **Without a watcher.** If the OS watcher cannot start (e.g. the Linux inotify watch limit), opening still
+  succeeds. A notice says outside changes are picked up when the window is focused.
+
+### Known limitations (file watching)
+
+- A note renamed outside NoteNest without an `id` in its frontmatter gets a new id, so it loses its
+  `last_opened_at` (as before). The editor follows such a rename only when it is unambiguous.
+- Network and some FUSE filesystems may deliver no events; focus reconciliation is the fallback.
+- The tiny window between a save's hash check and its rename (see Milestone 2) remains.
+- Verified with real inotify events in tests on Linux, and by compiling the Tauri crate. The desktop app
+  (event delivery to the webview, FSEvents on macOS, ReadDirectoryChangesW on Windows) has not been run.

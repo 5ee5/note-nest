@@ -12,6 +12,13 @@ import { VaultGate } from "./components/VaultGate";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { usePreventFileNavigation } from "./hooks/usePreventFileNavigation";
 import { useThemeSync } from "./hooks/useThemeSync";
+import { useVaultSync } from "./lib/vaultSync";
+
+/** Follows changes made to the open vault outside NoteNest. */
+function VaultSync() {
+  useVaultSync();
+  return null;
+}
 
 export default function App() {
   useThemeSync();
@@ -29,6 +36,7 @@ export default function App() {
   return (
     <div className="h-screen bg-bg text-fg">
       <VaultGate>
+        <VaultSync />
         <AppLayout />
         <CommandPalette />
         <SettingsDialog />

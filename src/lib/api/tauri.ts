@@ -1,4 +1,5 @@
 import { invoke, type InvokeArgs, type InvokeOptions } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { toApiError } from "./errors";
 import type {
   AffectedNote,
@@ -19,6 +20,7 @@ import type {
   RenderedMarkdown,
   SaveMode,
   TrashItem,
+  VaultChange,
 } from "./types";
 
 // Shapes returned by the Rust commands (snake_case, see crates/notenest-core).
@@ -385,7 +387,29 @@ export class TauriNotesApi implements NotesApi {
   setSetting(key: string, value: string): Promise<void> {
     return call("set_setting", { key, value });
   }
+
+  reconcile(): Promise<VaultChange> {
+    return call("reconcile");
+  }
+
+  onVaultChanged(listener: (change: VaultChange) => void): () => void {
+    let stopped = false;
+    let unlisten: (() => void) | null = null;
+    listen<VaultChange>(VAULT_CHANGED, (event) => listener(event.payload))
+      .then((un) => {
+        if (stopped) un();
+        else unlisten = un;
+      })
+      .catch((e) => console.warn("cannot listen for vault changes", e));
+    return () => {
+      stopped = true;
+      unlisten?.();
+    };
+  }
 }
+
+/** Event the backend emits after it reconciled changes made outside the app (see commands.rs). */
+export const VAULT_CHANGED = "vault-changed";
 
 // ---- vault lifecycle (not part of NotesApi: it happens before a vault exists) ----
 
@@ -403,6 +427,8 @@ export interface OpenedVault {
   unreadable: string[];
   skipped_invalid: string[];
   duplicate_ids_fixed: string[];
+  /** False if outside changes are only picked up on window focus (no OS watcher). */
+  watching: boolean;
 }
 
 export const vaultApi = {

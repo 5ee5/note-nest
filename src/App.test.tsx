@@ -444,6 +444,82 @@ describe("safety", () => {
   });
 });
 
+describe("changes made outside NoteNest", () => {
+  async function openLinux() {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByText("Linux"));
+    const box = (await screen.findByLabelText("Note content")) as HTMLTextAreaElement;
+    await waitFor(() => expect(box.value).toContain("Useful commands"));
+    return { user, box, id: useEditor.getState().noteId! };
+  }
+
+  it("shows an outside edit of the open note right away", async () => {
+    const { box, id } = await openLinux();
+    api.externalEdit(id, "rewritten in another editor");
+    api.emitVaultChange({ changed: [id] });
+    await waitFor(() => expect(box.value).toBe("rewritten in another editor"));
+    expect(screen.queryByText(/changed outside NoteNest/)).toBeNull();
+  });
+
+  it("lists notes created outside NoteNest", async () => {
+    await openLinux();
+    const added = api.externalCreate("Inbox/From the file manager.md", "hello");
+    api.emitVaultChange({ changed: [added] });
+    expect(await screen.findByText("From the file manager")).toBeTruthy();
+  });
+
+  it("closes a deleted note that had nothing unsaved", async () => {
+    const { id } = await openLinux();
+    api.externalDelete(id);
+    api.emitVaultChange({ removed: [id] });
+    expect(await screen.findByText(/“Linux” was deleted or moved outside NoteNest/)).toBeTruthy();
+    await waitFor(() => expect(screen.queryByLabelText("Note content")).toBeNull());
+  });
+
+  it("follows a note renamed outside NoteNest under a new id", async () => {
+    const { id } = await openLinux();
+    const content = api.contentOf(id);
+    api.externalDelete(id);
+    const renamed = api.externalCreate("Programming/Linux tips.md", content);
+    api.emitVaultChange({ changed: [renamed], removed: [id] });
+    await waitFor(() => expect(useEditor.getState().noteId).toBe(renamed));
+    expect(await screen.findByText(/“Linux” was renamed or moved/)).toBeTruthy();
+    await waitFor(() =>
+      expect((screen.getByLabelText("Note content") as HTMLTextAreaElement).value).toContain(
+        "Useful commands",
+      ),
+    );
+  });
+
+  it("keeps unsaved text of a deleted note and saves it as a new note", async () => {
+    const { user, box, id } = await openLinux();
+    await user.type(box, " plus unsaved words");
+    api.externalDelete(id);
+    api.emitVaultChange({ removed: [id] });
+    expect(await screen.findByText(/deleted or moved outside NoteNest, but you have/)).toBeTruthy();
+    expect(box.value).toContain("plus unsaved words");
+
+    await user.click(screen.getByRole("button", { name: "Save as a new note" }));
+    await waitFor(() => {
+      const open = useEditor.getState().noteId;
+      expect(open).not.toBeNull();
+      expect(open).not.toBe(id);
+      expect(api.contentOf(open!)).toContain("plus unsaved words");
+    });
+    expect(useNotes.getState().notes.find((n) => n.id === useEditor.getState().noteId)?.title).toBe(
+      "Linux",
+    );
+  });
+
+  it("reconciles when the window regains focus", async () => {
+    await openLinux();
+    const spy = vi.spyOn(api, "reconcile");
+    window.dispatchEvent(new Event("focus"));
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+  });
+});
+
 describe("Graph view", () => {
   it("opens from the sidebar and summarises the vault graph", async () => {
     const user = userEvent.setup();

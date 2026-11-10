@@ -169,6 +169,18 @@ export interface RenameOutcome {
   links: LinkUpdateReport;
 }
 
+/** What changed in the vault outside NoteNest (another editor, the file manager, sync tools). */
+export interface VaultChange {
+  /** Notes added or modified, including ones moved or renamed together with their id. */
+  changed: string[];
+  /** Notes that no longer exist under their id (deleted, or renamed without an id). */
+  removed: string[];
+  /** Folders were added, renamed or removed. */
+  folders: boolean;
+  /** Files other than notes (such as attachments) changed. */
+  files: boolean;
+}
+
 export interface NotesApi {
   /** True for sample data that is never written to disk. */
   readonly isSample: boolean;
@@ -233,4 +245,12 @@ export interface NotesApi {
 
   getSetting(key: string): Promise<string | null>;
   setSetting(key: string, value: string): Promise<void>;
+
+  /** Brings the index in line with the files now and resolves to what changed outside the app. */
+  reconcile(): Promise<VaultChange>;
+  /**
+   * Calls `listener` whenever the backend notices that files changed outside the app
+   * (the index is already updated by then). Returns a function that stops listening.
+   */
+  onVaultChanged(listener: (change: VaultChange) => void): () => void;
 }

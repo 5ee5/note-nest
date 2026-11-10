@@ -255,34 +255,65 @@ export function changeTheme(theme: Theme): void {
   void attempt("Could not save the theme setting", () => api().setSetting("theme", theme));
 }
 
+/**
+ * Puts text whose note no longer exists into a new note next to where it was (same
+ * title if free), opens it and saves. The old note's recovery draft is then dropped.
+ */
+async function recreateNote(path: string, content: string, oldId: string): Promise<void> {
+  const slash = path.lastIndexOf("/");
+  const folder = slash === -1 ? null : path.slice(0, slash);
+  const title = path.slice(slash + 1).replace(/\.md$/i, "");
+  await useNotes.getState().load();
+  const parent = folder && useNotes.getState().folders.includes(folder) ? folder : null;
+  let note;
+  try {
+    note = await api().createNote(parent, title);
+  } catch (e) {
+    if (toApiError(e).code !== "already_exists") throw e;
+    note = await api().createNote(parent);
+  }
+  await useNotes.getState().load();
+  await openNote(note.id);
+  useEditor.getState().restoreContent(content, true);
+  await useEditor.getState().flush();
+  await api().discardDraft(oldId);
+}
+
 /** Puts recovered unsaved text back into the editor (it is saved by the normal autosave). */
 export async function restoreDraft(draft: Draft): Promise<void> {
   await attempt("Could not restore the draft", async () => {
     if (draft.noteMissing) {
       // The note is gone: recover the text into a new note next to where it was.
-      const slash = draft.path.lastIndexOf("/");
-      const folder = slash === -1 ? null : draft.path.slice(0, slash);
-      const title = draft.path.slice(slash + 1).replace(/\.md$/i, "");
-      await useNotes.getState().load();
-      const parent = folder && useNotes.getState().folders.includes(folder) ? folder : null;
-      let note;
-      try {
-        note = await api().createNote(parent, title);
-      } catch (e) {
-        if (toApiError(e).code !== "already_exists") throw e;
-        note = await api().createNote(parent);
-      }
-      await useNotes.getState().load();
-      await openNote(note.id);
-      useEditor.getState().restoreContent(draft.content, true);
-      await useEditor.getState().flush();
-      await api().discardDraft(draft.noteId);
+      await recreateNote(draft.path, draft.content, draft.noteId);
     } else {
       await openNote(draft.noteId);
       useEditor.getState().restoreContent(draft.content, draft.diskChanged);
     }
     useRecovery.getState().remove(draft.noteId);
   });
+}
+
+/** The open note vanished outside NoteNest with unsaved text: saves the text as a new note. */
+export async function saveMissingAsNewNote(): Promise<void> {
+  const { noteId, missingNote, content, status } = useEditor.getState();
+  if (status !== "missing" || !noteId || !missingNote) return;
+  await attempt("Could not save the note", () => recreateNote(missingNote.path, content, noteId));
+}
+
+/**
+ * The open note vanished outside NoteNest: closes it. Nothing is discarded: the unsaved
+ * text stays in recovery drafts and is offered back the next time NoteNest starts.
+ */
+export async function closeMissingNote(): Promise<void> {
+  const editor = useEditor.getState();
+  if (editor.status !== "missing") return;
+  await editor.flush(); // stashes the latest text
+  editor.close();
+  ui().selectNote(null);
+  ui().notify(
+    "info",
+    "Your text was kept in recovery drafts; it is offered back on the next start.",
+  );
 }
 
 export async function discardDraft(draft: Draft): Promise<void> {

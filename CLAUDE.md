@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-NoteNest: local-first, offline Markdown note-taking app (Rust + Tauri 2 + React/TypeScript + Tailwind, SQLite, CodeMirror 6). Markdown files on disk are the source of truth. The full spec is `docs/PROJECT_SPEC.md` (gitignored on purpose, kept locally); read it before implementing features, follow its milestone order, and do not build post-v1 features (sync, plugins, AI). Current state: Milestones 0-4 done (UI, storage engine, CodeMirror editor with preview, attachments and statistics, tags, wiki links, backlinks, full-text search, favorites, recents, graph); Milestone 5 (reliability and polish) is next. Decisions deviating from the spec go in `docs/DECISIONS.md`.
+NoteNest: local-first, offline Markdown note-taking app (Rust + Tauri 2 + React/TypeScript + Tailwind, SQLite, CodeMirror 6). Markdown files on disk are the source of truth. The full spec is `docs/PROJECT_SPEC.md` (gitignored on purpose, kept locally); read it before implementing features, follow its milestone order, and do not build post-v1 features (sync, plugins, AI). Current state: Milestones 0-4 done (UI, storage engine, CodeMirror editor with preview, attachments and statistics, tags, wiki links, backlinks, full-text search, favorites, recents, graph); Milestone 5 (reliability and polish) is in progress: external filesystem monitoring is done; import/export, backup, performance, accessibility, security review and cross-platform testing remain. Decisions deviating from the spec go in `docs/DECISIONS.md`.
 
 ## Commands
 

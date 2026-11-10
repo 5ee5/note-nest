@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { toApiError } from "../lib/api";
+import { toApiError, type NoteDoc, type NoteSummary, type VaultChange } from "../lib/api";
 import { useNotes } from "./notes";
 import { useUi } from "./ui";
 
@@ -8,7 +8,27 @@ export const AUTOSAVE_MS = 800;
 /** Delay after the last keystroke before the text is stashed for crash recovery. */
 export const DRAFT_MS = 300;
 
-export type SaveStatus = "idle" | "dirty" | "saving" | "saved" | "error" | "conflict";
+export type SaveStatus =
+  | "idle"
+  | "dirty"
+  | "saving"
+  | "saved"
+  | "error"
+  | "conflict"
+  /** The note was deleted or moved outside NoteNest while it had unsaved text. */
+  | "missing";
+
+/** What happened to the open note after a change outside the app. */
+export type ExternalOutcome =
+  | "unaffected"
+  /** Reloaded from disk (it had no unsaved text). */
+  | "reloaded"
+  /** Unsaved text met a newer version on disk: autosave is paused for a decision. */
+  | "conflict"
+  /** The note is gone and had no unsaved text: the editor was closed. */
+  | "closed"
+  /** The note is gone but has unsaved text: kept in the editor and in recovery drafts. */
+  | "missing";
 
 interface EditorState {
   noteId: string | null;
@@ -24,6 +44,8 @@ interface EditorState {
   loadError: string | null;
   /** Bumped whenever the text is replaced wholesale (open, reload); remounts the editor. */
   revision: number;
+  /** While `status` is "missing": the note as it was before it disappeared. */
+  missingNote: NoteSummary | null;
 
   load: (id: string) => Promise<void>;
   edit: (text: string) => void;
@@ -37,6 +59,11 @@ interface EditorState {
   restoreContent: (text: string, overwrite: boolean) => void;
   /** Re-reads the open note after its location may have changed; closes it if gone. */
   reopen: () => Promise<void>;
+  /**
+   * Brings the open note in line with changes made outside the app: reloads it if it has
+   * no unsaved text, and never overwrites unsaved text (conflict or missing instead).
+   */
+  externalChange: (change: VaultChange) => Promise<ExternalOutcome>;
   close: () => void;
 }
 
@@ -58,8 +85,14 @@ const EMPTY = {
   message: null,
   loading: false,
   loadError: null,
+  missingNote: null as NoteSummary | null,
 };
 const INITIAL_REVISION = 0;
+
+/** Autosave waits for the user's decision in these states. */
+function paused(status: SaveStatus): boolean {
+  return status === "conflict" || status === "missing";
+}
 
 function clearTimers(): void {
   clearTimeout(saveTimer);
@@ -82,7 +115,7 @@ export const useEditor = create<EditorState>((set, get) => {
     do {
       resave = false;
       const s = get();
-      if (!s.noteId || s.baseHash === null || s.status === "conflict") return;
+      if (!s.noteId || s.baseHash === null || paused(s.status)) return;
       if (s.content === s.savedContent && !forceOverwrite) {
         if (s.status === "dirty") set({ status: "saved" });
         return;
@@ -167,20 +200,20 @@ export const useEditor = create<EditorState>((set, get) => {
     edit: (text) => {
       const s = get();
       if (!s.noteId) return;
-      const conflict = s.status === "conflict";
-      if (text === s.savedContent && !conflict && !forceOverwrite) {
+      const hold = paused(s.status);
+      if (text === s.savedContent && !hold && !forceOverwrite) {
         clearTimers();
         set({ content: text, status: "saved", message: null });
         return;
       }
       set({
         content: text,
-        status: conflict ? "conflict" : "dirty",
-        message: conflict ? s.message : null,
+        status: hold ? s.status : "dirty",
+        message: hold ? s.message : null,
       });
       clearTimeout(draftTimer);
       draftTimer = setTimeout(() => void stashNow(), DRAFT_MS);
-      if (!conflict) {
+      if (!hold) {
         clearTimeout(saveTimer);
         saveTimer = setTimeout(() => void save(), AUTOSAVE_MS);
       }
@@ -229,6 +262,64 @@ export const useEditor = create<EditorState>((set, get) => {
         get().close();
         useUi.getState().selectNote(null);
       }
+    },
+
+    externalChange: async (change) => {
+      const id = get().noteId;
+      if (!id || (!change.changed.includes(id) && !change.removed.includes(id))) {
+        return "unaffected";
+      }
+      const summary = useNotes.getState().notes.find((n) => n.id === id) ?? null;
+      // Let a save in progress land first, so its result is the baseline.
+      while (inflight) await inflight;
+      if (get().noteId !== id) return "unaffected";
+      let doc: NoteDoc | null = null;
+      try {
+        doc = await api().readNote(id);
+      } catch (e) {
+        if (toApiError(e).code !== "not_found") {
+          console.warn("could not re-read a note changed outside the app", e);
+          return "unaffected";
+        }
+      }
+      const s = get();
+      if (s.noteId !== id) return "unaffected";
+      const unsaved = s.content !== s.savedContent || forceOverwrite || paused(s.status);
+
+      if (!doc) {
+        if (!unsaved) {
+          get().close();
+          return "closed";
+        }
+        clearTimeout(saveTimer);
+        forceOverwrite = false;
+        set({
+          status: "missing",
+          message: "This note was deleted or moved outside NoteNest.",
+          missingNote: summary,
+        });
+        await stashNow();
+        return "missing";
+      }
+      useNotes.getState().applyNote(doc.note);
+      if (doc.contentHash === s.baseHash) return "unaffected"; // nothing new on disk
+      if (s.status === "conflict") return "conflict"; // already waiting for a decision
+      if (!unsaved) {
+        // Applied to the editor as a minimal edit, so the cursor and scroll stay put.
+        clearTimers();
+        set({
+          content: doc.content,
+          savedContent: doc.content,
+          baseHash: doc.contentHash,
+          status: s.status === "idle" ? "idle" : "saved",
+          message: null,
+        });
+        return "reloaded";
+      }
+      clearTimeout(saveTimer);
+      set({ status: "conflict", message: "Changed outside NoteNest while you were editing." });
+      await stashNow();
+      return "conflict";
     },
 
     close: () => {

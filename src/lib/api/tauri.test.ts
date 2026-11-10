@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const invoke = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...a: unknown[]) => invoke(...a) }));
+const listen = vi.fn();
+vi.mock("@tauri-apps/api/event", () => ({ listen: (...a: unknown[]) => listen(...a) }));
 
 import { TauriNotesApi } from "./tauri";
 
@@ -17,9 +19,39 @@ const record = {
   last_opened_at: null,
 };
 
-beforeEach(() => invoke.mockReset());
+beforeEach(() => {
+  invoke.mockReset();
+  listen.mockReset();
+});
 
 describe("TauriNotesApi", () => {
+  it("delivers vault-changed events until unsubscribed, even before listen resolves", async () => {
+    let handler: ((e: { payload: unknown }) => void) | undefined;
+    const unlisten = vi.fn();
+    listen.mockImplementation((_name: string, h: typeof handler) => {
+      handler = h;
+      return Promise.resolve(unlisten);
+    });
+    const api = new TauriNotesApi();
+    const got: unknown[] = [];
+    const stop = api.onVaultChanged((c) => got.push(c));
+    expect(listen.mock.calls[0][0]).toBe("vault-changed");
+    await Promise.resolve();
+    const change = { changed: ["a"], removed: [], folders: false, files: true };
+    handler!({ payload: change });
+    expect(got).toEqual([change]);
+    stop();
+    expect(unlisten).toHaveBeenCalledTimes(1);
+
+    // Unsubscribing before the listener is registered still removes it once it is.
+    const late = vi.fn();
+    listen.mockImplementation(() => Promise.resolve(late));
+    api.onVaultChanged(() => {})();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(late).toHaveBeenCalledTimes(1);
+  });
+
   it("maps backend records to UI summaries", async () => {
     invoke.mockResolvedValueOnce([record]);
     const [note] = await new TauriNotesApi().listNotes();

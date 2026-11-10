@@ -17,11 +17,14 @@ interface NotesState {
   tagCounts: TagCount[];
   status: "idle" | "loading" | "ready" | "error";
   error: string | null;
+  /** Bumped when files other than notes (attachments) changed outside the app. */
+  filesRevision: number;
 
   /** Reloads notes, folders and trash from the backend. */
   load: () => Promise<void>;
   /** Replaces one note in the list without a full reload. */
   applyNote: (note: NoteSummary) => void;
+  filesChanged: () => void;
 }
 
 export function createNotesStore(api: NotesApi) {
@@ -33,6 +36,7 @@ export function createNotesStore(api: NotesApi) {
     tagCounts: [],
     status: "idle",
     error: null,
+    filesRevision: 0,
 
     load: async () => {
       set({ status: "loading" });
@@ -56,6 +60,8 @@ export function createNotesStore(api: NotesApi) {
           ? s.notes.map((n) => (n.id === note.id ? note : n))
           : [...s.notes, note],
       })),
+
+    filesChanged: () => set((s) => ({ filesRevision: s.filesRevision + 1 })),
   }));
 }
 

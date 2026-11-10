@@ -161,3 +161,88 @@ describe("editor failures", () => {
     expect(s.noteId).toBeNull();
   });
 });
+
+describe("changes made outside the app", () => {
+  const change = (over: { changed?: string[]; removed?: string[] }) => ({
+    changed: [],
+    removed: [],
+    folders: false,
+    files: false,
+    ...over,
+  });
+
+  it("reloads a note without unsaved text in place, keeping the editor mounted", async () => {
+    const revision = useEditor.getState().revision;
+    api.externalEdit(id, "edited in another app");
+    const outcome = await useEditor.getState().externalChange(change({ changed: [id] }));
+    expect(outcome).toBe("reloaded");
+    const s = useEditor.getState();
+    expect(s.content).toBe("edited in another app");
+    expect(s.savedContent).toBe("edited in another app");
+    expect(s.revision).toBe(revision); // applied as an edit, so the cursor survives
+    // Typing afterwards saves on top of the new version without a conflict.
+    typeText("edited in another app, and here");
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_MS + 10);
+    expect(useEditor.getState().status).toBe("saved");
+    expect(api.contentOf(id)).toBe("edited in another app, and here");
+  });
+
+  it("never overwrites unsaved text: it pauses autosave and keeps a draft", async () => {
+    typeText("mine");
+    api.externalEdit(id, "theirs");
+    const outcome = await useEditor.getState().externalChange(change({ changed: [id] }));
+    expect(outcome).toBe("conflict");
+    expect(useEditor.getState().status).toBe("conflict");
+    expect(useEditor.getState().content).toBe("mine");
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_MS * 2);
+    expect(api.contentOf(id)).toBe("theirs");
+    expect((await api.listDrafts()).map((d) => d.content)).toEqual(["mine"]);
+  });
+
+  it("ignores changes to other notes and reports of its own saves", async () => {
+    const other = (await api.createNote(null, "B")).id;
+    const spy = vi.spyOn(api, "readNote");
+    expect(await useEditor.getState().externalChange(change({ changed: [other] }))).toBe(
+      "unaffected",
+    );
+    expect(spy).not.toHaveBeenCalled();
+
+    typeText("saved by me");
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_MS + 10);
+    expect(await useEditor.getState().externalChange(change({ changed: [id] }))).toBe("unaffected");
+    expect(useEditor.getState().status).toBe("saved");
+  });
+
+  it("waits for a save in progress before comparing", async () => {
+    typeText("about to be saved");
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_MS + 1); // save starts
+    const outcome = await useEditor.getState().externalChange(change({ changed: [id] }));
+    expect(outcome).toBe("unaffected");
+    expect(useEditor.getState().status).toBe("saved");
+  });
+
+  it("closes a deleted note that had no unsaved text", async () => {
+    api.externalDelete(id);
+    expect(await useEditor.getState().externalChange(change({ removed: [id] }))).toBe("closed");
+    expect(useEditor.getState().noteId).toBeNull();
+  });
+
+  it("keeps unsaved text of a deleted note and stops autosaving it", async () => {
+    typeText("precious");
+    await vi.advanceTimersByTimeAsync(DRAFT_MS + 10); // a draft exists
+    api.externalDelete(id);
+    expect(await useEditor.getState().externalChange(change({ removed: [id] }))).toBe("missing");
+    const s = useEditor.getState();
+    expect(s.status).toBe("missing");
+    expect(s.content).toBe("precious");
+    expect(s.missingNote?.title).toBe("A");
+
+    const save = vi.spyOn(api, "saveNote");
+    typeText("precious, and more");
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_MS * 2);
+    expect(save).not.toHaveBeenCalled();
+    expect(useEditor.getState().status).toBe("missing");
+    const drafts = await api.listDrafts();
+    expect(drafts.map((d) => d.content)).toEqual(["precious, and more"]);
+  });
+});
