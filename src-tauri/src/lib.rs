@@ -19,6 +19,7 @@ pub fn run() {
             commands::vault_status,
             commands::open_vault,
             commands::reindex,
+            commands::reconcile,
             commands::list_notes,
             commands::list_folders,
             commands::read_note,

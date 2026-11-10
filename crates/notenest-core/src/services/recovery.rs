@@ -50,17 +50,23 @@ impl Workspace {
     /// Stores the current unsaved text of a note. Cheap enough to call on every
     /// short debounce; replaces any previous draft for the note.
     ///
+    /// A note that disappeared (deleted or moved outside NoteNest) while it had
+    /// unsaved edits keeps updating the draft it already has, under its last path.
+    ///
     /// # Errors
-    /// [`Error::NotFound`] for an unknown note; [`Error::Io`] if the draft cannot be written.
+    /// [`Error::NotFound`] for an unknown note without a draft; [`Error::Io`] if the
+    /// draft cannot be written.
     pub async fn stash_draft(&self, id: Uuid, content: &str, base_hash: &str) -> Result<()> {
-        let record = self
-            .db
-            .get_note(id)
-            .await?
-            .ok_or_else(|| Error::NotFound(format!("note {id}")))?;
+        let path = match self.db.get_note(id).await? {
+            Some(record) => record.path,
+            None => self
+                .read_draft(id)
+                .map(|d| d.path)
+                .ok_or_else(|| Error::NotFound(format!("note {id}")))?,
+        };
         let draft = Draft {
             note_id: id,
-            path: record.path,
+            path,
             base_hash: base_hash.to_owned(),
             content: content.to_owned(),
             stashed_at: Utc::now(),
@@ -74,6 +80,11 @@ impl Workspace {
         let dir = self.drafts_dir();
         fs::create_dir_all(&dir).map_err(|e| Error::io(&dir, e))?;
         write_atomic(&self.draft_file(id), &json)
+    }
+
+    fn read_draft(&self, id: Uuid) -> Option<Draft> {
+        let bytes = fs::read(self.draft_file(id)).ok()?;
+        serde_json::from_slice(&bytes).ok()
     }
 
     /// Lists drafts that hold text not present in the note on disk. Drafts that
@@ -204,6 +215,30 @@ mod tests {
         let left = ws.list_drafts().await.unwrap();
         assert_eq!(left.len(), 1);
         assert_eq!(left[0].content, "v2");
+    }
+
+    #[tokio::test]
+    async fn a_note_deleted_outside_keeps_its_draft_current() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = open(&dir).await;
+        let n = ws.create_note(None, Some("Gone")).await.unwrap();
+        let base = ws.read_note(n.id).await.unwrap().record.content_hash;
+        ws.stash_draft(n.id, "first", &base).await.unwrap();
+        std::fs::remove_file(dir.path().join("Gone.md")).unwrap();
+        ws.reindex().await.unwrap();
+
+        ws.stash_draft(n.id, "typed after it vanished", &base)
+            .await
+            .unwrap();
+        let drafts = ws.list_drafts().await.unwrap();
+        assert_eq!(drafts.len(), 1);
+        assert_eq!(drafts[0].content, "typed after it vanished");
+        assert_eq!(drafts[0].path, "Gone.md");
+        assert!(drafts[0].note_missing);
+
+        // Without an earlier draft there is nothing to attach the text to.
+        let err = ws.stash_draft(Uuid::new_v4(), "x", "h").await.unwrap_err();
+        assert!(matches!(err, Error::NotFound(_)));
     }
 
     #[tokio::test]

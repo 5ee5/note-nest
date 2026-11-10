@@ -145,19 +145,21 @@ impl Database {
     ///
     /// A note in `entries` that already exists is deleted first (by id and by path) and
     /// inserted again, so moves, swaps and content edits all go through one path.
+    ///
+    /// Returns whether the folder list changed.
     pub async fn sync_index(
         &self,
         entries: &[IndexEntry],
         remove: &[Uuid],
         folders: &[String],
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let mut current = self.list_folders().await?;
         let mut wanted: Vec<String> = folders.to_vec();
         current.sort();
         wanted.sort();
         let folders_changed = current != wanted;
         if entries.is_empty() && remove.is_empty() && !folders_changed {
-            return Ok(());
+            return Ok(false);
         }
 
         let mut tx = self.pool().begin().await?;
@@ -185,7 +187,7 @@ impl Database {
         prune_tags(&mut tx).await?;
         tx.commit().await?;
         self.index_changed();
-        Ok(())
+        Ok(folders_changed)
     }
 }
 

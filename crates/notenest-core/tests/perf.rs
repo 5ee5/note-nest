@@ -96,6 +96,8 @@ async fn large_vault_performance() {
     let bytes: u64 = walk_size(dir.path());
     println!("{:<44} {:>9.1} MB", "vault size", bytes as f64 / 1e6);
     let _ = build;
+    // Real notes are rarely seconds old; let the files settle so the scan cache trusts them.
+    std::thread::sleep(Duration::from_millis(2100));
 
     let t = Instant::now();
     let (ws, report) = Workspace::open(dir.path(), false).await.unwrap();
@@ -115,6 +117,27 @@ async fn large_vault_performance() {
         "{:<44} {:>9.1} ms",
         "SECOND open (reindex over existing index)",
         second_open.as_secs_f64() * 1000.0
+    );
+
+    let t = Instant::now();
+    let pass = ws.reindex().await.unwrap();
+    let watch_pass = t.elapsed();
+    assert!(pass.changed.is_empty() && pass.removed.is_empty());
+    println!(
+        "{:<44} {:>9.1} ms",
+        "watcher pass, nothing changed (scan cache)",
+        watch_pass.as_secs_f64() * 1000.0
+    );
+    let some = ws.list_notes().await.unwrap()[0].path.clone();
+    std::fs::write(dir.path().join(&some), "# Edited elsewhere\n\nNew text.").unwrap();
+    let t = Instant::now();
+    let pass = ws.reindex().await.unwrap();
+    let watch_edit = t.elapsed();
+    assert_eq!(pass.changed.len(), 1);
+    println!(
+        "{:<44} {:>9.1} ms",
+        "watcher pass, one note edited outside",
+        watch_edit.as_secs_f64() * 1000.0
     );
 
     let notes = ws.list_notes().await.unwrap();

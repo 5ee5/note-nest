@@ -15,7 +15,7 @@ use serde::Serialize;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use super::reindex::{reindex, ReindexReport};
+use super::reindex::{reindex_cached, ReindexReport, ScanCache};
 use crate::database::Database;
 use crate::extract::extract;
 use crate::filesystem::atomic::write_atomic;
@@ -63,6 +63,8 @@ pub struct Workspace {
     pub(super) vault: Vault,
     pub(super) db: Database,
     pub(super) write_lock: Arc<Mutex<()>>,
+    /// What the last reindex read, so the next one can skip unchanged files.
+    pub(super) scan_cache: ScanCache,
 }
 
 fn utc(t: std::io::Result<std::time::SystemTime>) -> Option<DateTime<Utc>> {
@@ -86,8 +88,9 @@ impl Workspace {
             vault,
             db: opened.database,
             write_lock: Arc::new(Mutex::new(())),
+            scan_cache: ScanCache::default(),
         };
-        let report = reindex(&ws.vault, &ws.db).await?;
+        let report = ws.rescan().await?;
         Ok((
             ws,
             OpenReport {
@@ -108,13 +111,20 @@ impl Workspace {
         &self.db
     }
 
-    /// Rebuilds the index from the vault.
+    /// Brings the index in line with the vault: picks up notes and folders added,
+    /// changed, moved or removed outside NoteNest. Files whose size and modification
+    /// time are unchanged since the last pass are not read again.
     ///
     /// # Errors
-    /// See [`reindex`].
+    /// See [`reindex`](super::reindex::reindex).
     pub async fn reindex(&self) -> Result<ReindexReport> {
         let _g = self.write_lock.lock().await;
-        reindex(&self.vault, &self.db).await
+        self.rescan().await
+    }
+
+    /// [`Self::reindex`] for callers that already hold the write lock.
+    pub(super) async fn rescan(&self) -> Result<ReindexReport> {
+        reindex_cached(&self.vault, &self.db, &self.scan_cache).await
     }
 
     // ---------------------------------------------------------------- queries
@@ -447,7 +457,7 @@ impl Workspace {
         reject_reserved(&from)?;
         reject_reserved(&to)?;
         self.vault.rename(&from, &to)?;
-        reindex(&self.vault, &self.db).await.map(|_| ())
+        self.rescan().await.map(|_| ())
     }
 
     /// Moves a folder under `new_parent` (vault root if `None`).
@@ -460,7 +470,7 @@ impl Workspace {
         let dir = self.folder_path(new_parent)?;
         let to = child(dir.as_ref(), from.file_name())?;
         self.vault.rename(&from, &to)?;
-        reindex(&self.vault, &self.db).await.map(|_| ())
+        self.rescan().await.map(|_| ())
     }
 
     /// Moves a folder and everything in it to the trash.
@@ -470,7 +480,7 @@ impl Workspace {
     pub async fn delete_folder(&self, path: &str) -> Result<TrashEntry> {
         let _g = self.write_lock.lock().await;
         let entry = self.vault.trash(&RelPath::new(path)?)?;
-        reindex(&self.vault, &self.db).await?;
+        self.rescan().await?;
         Ok(entry)
     }
 
@@ -481,7 +491,7 @@ impl Workspace {
     pub async fn restore(&self, trash_id: Uuid) -> Result<RelPath> {
         let _g = self.write_lock.lock().await;
         let path = self.vault.restore(trash_id)?;
-        reindex(&self.vault, &self.db).await?;
+        self.rescan().await?;
         Ok(path)
     }
 

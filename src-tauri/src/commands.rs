@@ -7,12 +7,12 @@ use notenest_core::models::{
     BrokenLink, Graph, NoteEntry, NoteLinks, NoteRecord, NoteRef, SearchHit, TagCount,
 };
 use notenest_core::services::{
-    AffectedNote, Attachment, Draft, LinkUpdateReport, NoteContent, RenameOutcome, SaveMode,
-    Workspace,
+    watch, AffectedNote, Attachment, Draft, LinkUpdateReport, NoteContent, RenameOutcome, SaveMode,
+    VaultChange, Workspace,
 };
 use notenest_core::{Error, Result};
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use uuid::Uuid;
 
 use crate::state::AppState;
@@ -61,7 +61,13 @@ pub struct OpenedVault {
     pub unreadable: Vec<String>,
     pub skipped_invalid: Vec<String>,
     pub duplicate_ids_fixed: Vec<String>,
+    /// Whether changes made outside NoteNest are picked up as they happen. If not
+    /// (e.g. the OS watch limit is reached), they are picked up on window focus.
+    pub watching: bool,
 }
+
+/// Event sent to the window when files in the vault changed outside NoteNest.
+pub const VAULT_CHANGED: &str = "vault-changed";
 
 #[tauri::command]
 pub async fn open_vault(
@@ -70,13 +76,25 @@ pub async fn open_vault(
     path: String,
     create: bool,
 ) -> Result<OpenedVault> {
+    // Stop watching the previous vault before anything else touches the state.
+    state.set_watcher(None);
     let (ws, report) = Workspace::open(Path::new(&path), create).await?;
     let root = ws.vault().root().to_string_lossy().into_owned();
     // Remember the vault only once it opened successfully.
     let mut cfg = AppConfig::load(&config_dir(&app)?)?;
     cfg.vault_path = Some(root.clone());
     cfg.save(&config_dir(&app)?)?;
-    state.set_workspace(ws).await;
+    state.set_workspace(ws.clone()).await;
+    let emitter = app.clone();
+    let watcher = watch(ws, move |change| {
+        // Fails only while the window is closing.
+        let _ = emitter.emit(VAULT_CHANGED, change);
+    });
+    let watching = watcher.is_ok();
+    if let Err(e) = &watcher {
+        eprintln!("NoteNest: not watching the vault for outside changes: {e}");
+    }
+    state.set_watcher(watcher.ok());
     Ok(OpenedVault {
         path: root,
         index_rebuilt: report.index_rebuilt,
@@ -87,12 +105,21 @@ pub async fn open_vault(
         unreadable: report.reindex.unreadable,
         skipped_invalid: report.reindex.skipped_invalid,
         duplicate_ids_fixed: report.reindex.duplicate_ids_fixed,
+        watching,
     })
 }
 
 #[tauri::command]
 pub async fn reindex(state: State<'_, AppState>) -> Result<usize> {
     Ok(state.workspace().await?.reindex().await?.notes)
+}
+
+/// Brings the index in line with the vault now and says what changed outside
+/// NoteNest (the watcher does the same on its own; this covers missed events).
+#[tauri::command]
+pub async fn reconcile(state: State<'_, AppState>) -> Result<VaultChange> {
+    let report = state.workspace().await?.reindex().await?;
+    Ok(VaultChange::from_report(&report, false))
 }
 
 #[tauri::command]

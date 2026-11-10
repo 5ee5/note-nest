@@ -23,7 +23,6 @@ use chrono::Utc;
 use serde::Serialize;
 use uuid::Uuid;
 
-use super::reindex::reindex;
 use super::workspace::{child, Workspace};
 use crate::database::{CapturedLink, Resolver};
 use crate::extract::{extract, link_key};
@@ -400,7 +399,7 @@ impl Workspace {
         let moved = self.notes_under(from).await?;
         let captured = self.db.links_to(&moved).await?;
         self.vault.rename(from, to)?;
-        reindex(&self.vault, &self.db).await?;
+        self.rescan().await?;
         let map = PathMap::Prefix {
             from: from.to_string(),
             to: to.to_string(),
