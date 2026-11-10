@@ -229,3 +229,25 @@ pinned to ~5.9 because typescript-eslint does not support TS 7.
   and refused by a file import.
 - Import and export paths come from native dialogs in the webview. The backend refuses paths inside the vault,
   but otherwise trusts them. This is part of the Milestone 5 security review.
+
+## Milestone 5: backup and recovery
+
+- **A backup is an exact copy of the vault** in a new `<vault> backup <date time>` folder inside a folder the
+  user chooses (Settings > Backup, or the command palette). It reuses the export code with standard Markdown
+  off, so ids, frontmatter and attachments are preserved, and it never overwrites an earlier backup.
+- **Verified:** after copying, every file is read back and compared with its original. A mismatch is an
+  error, and the "last backup" time is only recorded after a clean check.
+- **Restoring is opening the copy as a vault** (Settings > Change vault), which keeps every note id. To merge
+  a backup into an existing vault, import its folder (duplicate ids get new ones).
+- **Manual only.** There is no schedule and no background job, so nothing runs without the user asking. Settings
+  shows when the last backup was made.
+- **Already in place from earlier milestones:** the index rebuilds from the files, a damaged index is moved
+  aside, unsaved text is kept as drafts, deleted notes go to the trash, and overwritten or link-edited
+  files are copied to `.notenest/recovery/` first.
+
+### Known limitations (backup)
+
+- The trash and `.notenest/recovery/` are not part of a backup (hidden folders are skipped). Recent
+  deletions are not in it.
+- A backup inside a cloud-synced or same-drive folder protects against mistakes, not drive failure.
+- No pruning of old backups; the user deletes them.

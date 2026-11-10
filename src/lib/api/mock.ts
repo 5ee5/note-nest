@@ -764,6 +764,13 @@ export class MockNotesApi implements NotesApi {
     return Promise.resolve({ destination: dest, notes: this.notes.size, files: 0, skipped: [] });
   }
 
+  async backupVault(path: string): Promise<ExportReport> {
+    const dest = `${path}/Sample backup`;
+    for (const s of this.notes.values()) this.disk.set(`${dest}/${s.note.path}`, s.content);
+    this.settings.set("last_backup", new Date().toISOString());
+    return Promise.resolve({ destination: dest, notes: this.notes.size, files: 0, skipped: [] });
+  }
+
   async reconcile(): Promise<VaultChange> {
     // Nothing changes behind an in-memory vault's back except through the test hooks,
     // which report their changes with emitVaultChange.

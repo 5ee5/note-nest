@@ -9,6 +9,7 @@ vi.mock("./pickers", () => pickers);
 
 import { MockNotesApi } from "./api/mock";
 import {
+  backUpVault,
   exportCurrentNote,
   exportVault,
   importMarkdownFiles,
@@ -28,7 +29,13 @@ beforeEach(async () => {
   id = (await api.createNote(null, "Plan")).id;
   await api.saveNote(id, "---\nid: x\ntags: [a]\n---\nPlan text", { overwrite: true });
   await useNotes.getState().load();
-  useUi.setState({ notices: [], view: { kind: "all" }, exportStandard: true, selectedNoteId: id });
+  useUi.setState({
+    notices: [],
+    view: { kind: "all" },
+    exportStandard: true,
+    lastBackup: null,
+    selectedNoteId: id,
+  });
   await useEditor.getState().load(id);
   for (const p of Object.values(pickers)) p.mockReset();
 });
@@ -117,5 +124,21 @@ describe("export", () => {
     await exportVault();
     expect(api.disk.get("/backup/Sample export/Plan.md")).toBe("---\ntags: [a]\n---\nPlan text");
     expect(notices()).toContain("info: Exported 1 note to /backup/Sample export.");
+  });
+});
+
+describe("backup", () => {
+  it("backs up, records the time and says how to restore", async () => {
+    pickers.pickFolder.mockResolvedValue("/backup");
+    await backUpVault();
+    expect(api.disk.get("/backup/Sample backup/Plan.md")).toContain("id: x");
+    expect(useUi.getState().lastBackup).not.toBeNull();
+    expect(notices().some((n) => n.includes("open the backup folder as a vault"))).toBe(true);
+  });
+
+  it("does nothing when cancelled", async () => {
+    pickers.pickFolder.mockResolvedValue(null);
+    await backUpVault();
+    expect(useUi.getState().lastBackup).toBeNull();
   });
 });

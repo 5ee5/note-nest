@@ -4,6 +4,7 @@ import {
   changeEditorMode,
   changeTheme,
   createFolder,
+  backUpVault,
   createNote,
   exportCurrentNote,
   exportVault,
@@ -134,6 +135,9 @@ export function CommandPalette() {
             </Command.Item>
             <Command.Item className={itemClass} onSelect={run(exportCurrentNote)}>
               Export this note…
+            </Command.Item>
+            <Command.Item className={itemClass} onSelect={run(backUpVault)}>
+              Back up the vault…
             </Command.Item>
             <Command.Item className={itemClass} onSelect={run(exportVault)}>
               Export the vault…

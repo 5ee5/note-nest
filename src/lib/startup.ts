@@ -10,6 +10,7 @@ export async function afterVaultOpen(): Promise<void> {
   try {
     const theme = await api.getSetting("theme");
     if (isTheme(theme)) useUi.getState().setTheme(theme);
+    useUi.getState().setLastBackup(await api.getSetting("last_backup"));
     const mode = await api.getSetting("editorMode");
     if (isEditorMode(mode)) useUi.getState().setEditorMode(mode);
   } catch (e) {

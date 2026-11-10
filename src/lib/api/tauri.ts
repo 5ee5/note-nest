@@ -406,6 +406,10 @@ export class TauriNotesApi implements NotesApi {
     return call("export_vault", { path, standard });
   }
 
+  backupVault(path: string): Promise<ExportReport> {
+    return call("backup_vault", { path });
+  }
+
   reconcile(): Promise<VaultChange> {
     return call("reconcile");
   }

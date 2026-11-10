@@ -592,3 +592,13 @@ pub async fn export_vault(
         .export_vault(Path::new(&path), standard)
         .await
 }
+
+/// Copies the vault exactly, verified, into a new folder inside the chosen folder.
+#[tauri::command]
+pub async fn backup_vault(state: State<'_, AppState>, path: String) -> Result<ExportReport> {
+    state
+        .workspace()
+        .await?
+        .backup_vault(Path::new(&path))
+        .await
+}

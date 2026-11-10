@@ -565,3 +565,17 @@ export async function exportVault(): Promise<void> {
   );
   if (report) finishExport(report, plural(report.notes, "note"));
 }
+
+/** Asks for a folder and writes a verified, exact copy of the vault into a new folder in it. */
+export async function backUpVault(): Promise<void> {
+  await useEditor.getState().flush();
+  const path = await attempt("Could not open the folder picker", () =>
+    pickFolder("Choose where to keep the backup (not inside the vault)"),
+  );
+  if (!path) return;
+  const report = await attempt("Backup failed", () => api().backupVault(path));
+  if (!report) return;
+  ui().setLastBackup(await api().getSetting("last_backup"));
+  finishExport(report, `a backup of ${plural(report.notes, "note")}`);
+  ui().notify("info", "To restore, open the backup folder as a vault (Settings > Change vault).");
+}

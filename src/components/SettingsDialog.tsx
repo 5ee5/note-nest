@@ -5,6 +5,7 @@ import { modLabel } from "../lib/shortcuts";
 import { isTauri } from "../lib/api";
 import {
   changeTheme,
+  backUpVault,
   exportCurrentNote,
   exportVault,
   importMarkdownFiles,
@@ -24,6 +25,7 @@ export function SettingsDialog() {
   const setOpen = useUi((s) => s.setSettingsOpen);
   const theme = useUi((s) => s.theme);
   const vaultPath = useVault((s) => s.path);
+  const lastBackup = useUi((s) => s.lastBackup);
   const exportStandard = useUi((s) => s.exportStandard);
   const setExportStandard = useUi((s) => s.setExportStandard);
   /** Closes the dialog (native pickers open on top of the window) and runs `fn`. */
@@ -89,6 +91,24 @@ export function SettingsDialog() {
               >
                 Change vault…
               </button>
+            </section>
+          )}
+
+          {isTauri() && (
+            <section className="mt-5" aria-label="Backup">
+              <h3 className="mb-1 text-sm font-medium">Backup</h3>
+              <p className="text-sm text-fg-muted">
+                {lastBackup
+                  ? `Last backup: ${new Date(lastBackup).toLocaleString()}`
+                  : "This vault has not been backed up yet."}
+              </p>
+              <button type="button" onClick={close(backUpVault)} className={`mt-2 ${buttonClass}`}>
+                Back up now…
+              </button>
+              <p className="mt-1 text-xs text-fg-muted">
+                An exact, verified copy in a folder you choose. Keep it on another drive. Open it as
+                a vault to restore.
+              </p>
             </section>
           )}
 

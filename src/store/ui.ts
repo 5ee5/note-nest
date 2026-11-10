@@ -52,6 +52,8 @@ interface UiState {
   searchFocusTick: number;
   /** Exports convert to standard Markdown (wiki links, NoteNest's own frontmatter keys). */
   exportStandard: boolean;
+  /** When the vault was last backed up (ISO 8601), if ever. */
+  lastBackup: string | null;
 
   setTheme: (theme: Theme) => void;
   setEditorMode: (mode: EditorMode) => void;
@@ -64,6 +66,7 @@ interface UiState {
   setPaletteOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
   setExportStandard: (standard: boolean) => void;
+  setLastBackup: (when: string | null) => void;
   focusSearch: () => void;
   notify: (kind: Notice["kind"], message: string) => void;
   dismissNotice: (id: number) => void;
@@ -91,6 +94,7 @@ export const useUi = create<UiState>((set) => ({
   linkUpdate: null,
   searchFocusTick: 0,
   exportStandard: true,
+  lastBackup: null,
 
   setTheme: (theme) => {
     saveTheme(theme);
@@ -107,6 +111,7 @@ export const useUi = create<UiState>((set) => ({
   setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   setExportStandard: (exportStandard) => set({ exportStandard }),
+  setLastBackup: (lastBackup) => set({ lastBackup }),
   focusSearch: () =>
     set((s) => ({ explorerCollapsed: false, searchFocusTick: s.searchFocusTick + 1 })),
   notify: (kind, message) =>

@@ -539,15 +539,68 @@ impl Workspace {
     /// # Errors
     /// [`Error::InvalidPath`] if `parent` is inside the vault; I/O errors.
     pub async fn export_vault(&self, parent: &Path, standard: bool) -> Result<ExportReport> {
-        let parent = self.outside_vault(parent, "the export destination")?;
+        self.copy_vault(parent, standard, "export").await
+    }
+
+    /// Copies the vault exactly (ids and all) into a new `<vault> backup <date time>`
+    /// folder inside `parent`, then re-reads every copied file and compares it with the
+    /// original. The copy is itself a vault: open it, or import it, to restore.
+    /// The time is recorded in the `last_backup` setting.
+    ///
+    /// # Errors
+    /// [`Error::InvalidPath`] if `parent` is inside the vault; [`Error::Corrupt`] if a
+    /// copied file does not match its original; I/O errors.
+    pub async fn backup_vault(&self, parent: &Path) -> Result<ExportReport> {
+        let report = self.copy_vault(parent, false, "backup").await?;
+        let out = PathBuf::from(&report.destination);
+        let root = self.vault.root().to_owned();
+        let mut bad = Vec::new();
+        let walker = WalkDir::new(&root)
+            .follow_links(false)
+            .min_depth(1)
+            .into_iter()
+            .filter_entry(|e| e.file_name().to_str().is_none_or(|n| !is_hidden_name(n)));
+        for entry in walker.filter_map(std::result::Result::ok) {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let Ok(rel) = entry.path().strip_prefix(&root) else {
+                continue;
+            };
+            let same = match (fs::read(entry.path()), fs::read(out.join(rel))) {
+                (Ok(a), Ok(b)) => a == b,
+                _ => false,
+            };
+            if !same {
+                bad.push(rel.to_string_lossy().into_owned());
+            }
+        }
+        if !bad.is_empty() {
+            return Err(Error::Corrupt {
+                context: report.destination,
+                message: format!("copied files differ from the originals: {}", bad.join(", ")),
+            });
+        }
+        self.db
+            .set_setting("last_backup", &chrono::Utc::now().to_rfc3339())
+            .await?;
+        Ok(report)
+    }
+
+    async fn copy_vault(&self, parent: &Path, standard: bool, label: &str) -> Result<ExportReport> {
+        let parent = self.outside_vault(parent, "the destination")?;
         let name = self
             .vault
             .root()
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("NoteNest");
-        let date = chrono::Local::now().format("%Y-%m-%d");
-        let base = format!("{name} export {date}");
+        let when = if label == "backup" {
+            chrono::Local::now().format("%Y-%m-%d %H-%M")
+        } else {
+            chrono::Local::now().format("%Y-%m-%d")
+        };
+        let base = format!("{name} {label} {when}");
         let out = (1..=MAX_NAME_ATTEMPTS)
             .map(|n| {
                 parent.join(if n == 1 {
@@ -901,5 +954,33 @@ mod tests {
         let html = other.render_markdown(Some(plan.id), content).await.unwrap();
         assert!(html.warnings.is_empty(), "{:?}", html.warnings);
         assert!(html.html.contains("<img"), "{}", html.html);
+    }
+
+    #[tokio::test]
+    async fn backs_up_an_exact_verified_copy_that_opens_as_a_vault() {
+        let (vdir, ws) = vault().await;
+        let id = sample(&ws, vdir.path()).await;
+        let out = tempfile::tempdir().unwrap();
+
+        let report = ws.backup_vault(out.path()).await.unwrap();
+        let dest = PathBuf::from(&report.destination);
+        assert!(dest
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .contains(" backup "));
+        assert_eq!(
+            read(&dest.join("Projects/Plan.md")),
+            read(&vdir.path().join("Projects/Plan.md"))
+        );
+        assert!(ws.get_setting("last_backup").await.unwrap().is_some());
+
+        // Restoring: the backup opens as a vault with the same note ids.
+        let (restored, _) = Workspace::open(&dest, false).await.unwrap();
+        assert!(restored.database().get_note(id).await.unwrap().is_some());
+        // A second backup never touches the first.
+        let second = ws.backup_vault(out.path()).await.unwrap();
+        assert_ne!(second.destination, report.destination);
+        assert!(ws.backup_vault(vdir.path()).await.is_err());
     }
 }

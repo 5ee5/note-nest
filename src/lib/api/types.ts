@@ -290,6 +290,12 @@ export interface NotesApi {
    */
   exportVault(path: string, standard: boolean): Promise<ExportReport>;
 
+  /**
+   * Copies the vault exactly into a new folder inside `path` and verifies the copy.
+   * Records the time in the `last_backup` setting.
+   */
+  backupVault(path: string): Promise<ExportReport>;
+
   /** Brings the index in line with the files now and resolves to what changed outside the app. */
   reconcile(): Promise<VaultChange>;
   /**

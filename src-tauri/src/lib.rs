@@ -65,6 +65,7 @@ pub fn run() {
             commands::import_folder,
             commands::export_note,
             commands::export_vault,
+            commands::backup_vault,
         ])
         .run(tauri::generate_context!())
         .expect("error while running NoteNest");
